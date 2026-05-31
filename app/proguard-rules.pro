@@ -35,8 +35,8 @@
 -keep class * implements com.google.gson.JsonDeserializer
 
 # Keep all model classes (adjust package names as needed)
--keep class com.massapay.android.core.model.** { *; }
--keep class com.massapay.android.network.model.** { *; }
+-keep class com.zoka.zkapriv.core.model.** { *; }
+-keep class com.zoka.zkapriv.network.model.** { *; }
 
 # BouncyCastle crypto
 -keep class org.bouncycastle.** { *; }

@@ -1,4 +1,4 @@
-rootProject.name = "MassaPay"
+rootProject.name = "ZkaPriv"
 
 include(":app")
 include(":core")

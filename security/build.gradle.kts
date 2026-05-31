@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     id("com.android.library")
     id("kotlin-android")
     id("kotlin-kapt")
@@ -6,8 +6,8 @@ plugins {
 }
 
 android {
-    namespace = "com.massapay.android.security"
-    compileSdk = 34
+    namespace = "com.zoka.zkapriv.security"
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 26

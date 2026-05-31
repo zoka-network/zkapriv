@@ -16,7 +16,7 @@ object Ristretto255 {
     private val P = BigInteger.TWO.pow(255) - BigInteger.valueOf(19)
     private val L = BigInteger("7237005577332262213973186563042994240857116359379907606001950938285454250989")
     private val SQRT_M1 = BigInteger("19681161376707505956807079304988542015446066515923890162744021073123829784752")
-    private val INVSQRT_A_MINUS_D = BigInteger("25063068953384623474111414158702152701244531502492656460079210482610430750235")
+    private val INVSQRT_A_MINUS_D = BigInteger("54469307008909316920995813868745141605393597292927456921205312896311721017578")
     private val D = BigInteger("37095705934669439343138083508754565189542113879843219016388785533085940283555")
     private val P58 = (P - BigInteger.valueOf(5)) / BigInteger.valueOf(8)
 
@@ -25,10 +25,10 @@ object Ristretto255 {
     private val IDENTITY = Point(BigInteger.ZERO, BigInteger.ONE, BigInteger.ONE, BigInteger.ZERO)
 
     private val BASE = Point(
-        X = BigInteger("15112221349535807912866137220509078750507884956996801868913811283870284295234"),
-        Y = BigInteger("46316835694926478169428394003475163141307993866256225615783033011972563504410"),
+        X = BigInteger("15112221349535400772501151409588531511454012693041857206046113283949847762202"),
+        Y = BigInteger("46316835694926478169428394003475163141307993866256225615783033603165251855960"),
         Z = BigInteger.ONE,
-        T = BigInteger("46827403850823179245885197657976651541823052238390700758014975586879097887992")
+        T = BigInteger("46827403850823179245072216630277197565144205554125654976674165829533817101731")
     )
 
     private fun fadd(a: BigInteger, b: BigInteger) = (a + b).mod(P)
@@ -54,7 +54,12 @@ object Ristretto255 {
         val r = fmul(fmul(u, v3), fmul(u, v7).modPow(P58, P))
         val c = fmul(v, fmul(r, r))
         val uMod = u.mod(P)
-        return if (c == uMod) Pair(true, r) else Pair(false, fmul(r, SQRT_M1))
+        val negUMod = fneg(uMod)
+        return when {
+            c == uMod    -> Pair(true, r)
+            c == negUMod -> Pair(true, fmul(r, SQRT_M1))
+            else         -> Pair(false, fmul(r, SQRT_M1))
+        }
     }
 
     private fun pointAdd(p1: Point, p2: Point): Point {
@@ -91,38 +96,47 @@ object Ristretto255 {
     }
 
     /**
-     * Ristretto255 encode — normalizes first, then matches Python renc() exactly.
+     * Ristretto255 encode — matches the IRTF spec and curve25519-dalek exactly.
+     *
+     * Steps:
+     * 1. u1 = (Z+Y)(Z-Y), u2 = X*Y
+     * 2. invsqrt = sqrt(1 / (u1*u2^2))
+     * 3. i1 = invsqrt*u1, i2 = invsqrt*u2, z_inv = i1*i2*T
+     * 4. If IS_NEGATIVE(T * z_inv): rotate (X,Y) and switch to i1*INVSQRT_A_MINUS_D
+     * 5. If IS_NEGATIVE(X * z_inv): negate Y
+     * 6. s = (Z - Y) * i2; return ABS(s)
      */
     private fun encode(p: Point): ByteArray {
         val n = normalize(p)
-        val X = n.X
-        val Y = n.Y
+        var X = n.X
+        var Y = n.Y
         val Z = BigInteger.ONE
+        val T = fmul(X, Y)  // T = X*Y since Z=1 after normalization
 
-        val u1 = fmul(fadd(Z, Y), fsub(Z, Y))   // (1+Y)(1-Y) = 1-Y^2
+        val u1 = fmul(fadd(Z, Y), fsub(Z, Y))
         val u2 = fmul(X, Y)
+
         val invsqrt = sqm1(BigInteger.ONE, fmul(u1, fmul(u2, u2)))
+
         val i1 = fmul(invsqrt, u1)
-        val i2 = fmul(invsqrt, u2)
-        val ristrettoSqrt = fmul(i1, INVSQRT_A_MINUS_D)
+        var i2 = fmul(invsqrt, u2)
+        val zInv = fmul(fmul(i1, i2), T)
 
-        var denInv = i2
-        var x: BigInteger
-        var y: BigInteger
-
-        if (fisNeg(i2)) {
-            x = fmul(Y, SQRT_M1)
-            y = fmul(X, SQRT_M1)
-            denInv = ristrettoSqrt
-        } else {
-            x = X
-            y = Y
+        // Correct branch condition: IS_NEGATIVE(T * z_inv)
+        if (fisNeg(fmul(T, zInv))) {
+            val rotX = fmul(Y, SQRT_M1)
+            val rotY = fmul(X, SQRT_M1)
+            X = rotX
+            Y = rotY
+            i2 = fmul(i1, INVSQRT_A_MINUS_D)
         }
 
-        val iXEff = fmul(x, SQRT_M1)
-        val iy = fmul(denInv, fsub(Z, y))
-        val enchantedDen = fmul(denInv, fadd(Z, y))
-        var s = if (fisNeg(iXEff)) enchantedDen else iy
+        // IS_NEGATIVE(X * z_inv): negate Y
+        if (fisNeg(fmul(X, zInv))) {
+            Y = fneg(Y)
+        }
+
+        var s = fmul(i2, fsub(Z, Y))
         if (fisNeg(s)) s = fneg(s)
         return fieldToLittleEndian32(s)
     }
@@ -163,7 +177,7 @@ object Ristretto255 {
         val u2 = fadd(BigInteger.ONE, ss)        // 1 + s^2
         val u2sq = fmul(u2, u2)
         val u1sq = fmul(u1, u1)
-        val v = fsub(fmul(D, u1sq), u2sq)        // D*u1^2 - u2^2
+        val v = fsub(fneg(fmul(D, u1sq)), u2sq)   // -(D*u1^2) - u2^2
 
         val (wasSquare, bigI) = sqm1Flag(BigInteger.ONE, fmul(v, u2sq))
         if (!wasSquare) return null
@@ -173,8 +187,7 @@ object Ristretto255 {
         val x = if (fisNeg(dxs)) fneg(dxs) else dxs
 
         val denY = fmul(fmul(bigI, dx), v)
-        val yAbs = fmul(u1, denY)
-        val y = if (fisNeg(yAbs)) fneg(yAbs) else yAbs
+        val y = fmul(u1, denY)
 
         val t = fmul(x, y)
         if (fisNeg(t)) return null

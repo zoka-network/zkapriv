@@ -15,23 +15,16 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
-// Load local properties for API keys
-val localPropertiesFile = rootProject.file("local.properties")
-val localProperties = Properties()
-if (localPropertiesFile.exists()) {
-    localProperties.load(FileInputStream(localPropertiesFile))
-}
-
 android {
-    namespace = "com.massapay.android"
-    compileSdk = 35
+    namespace = "com.zoka.zkapriv"
+    compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.massapay.android"
-        minSdk = 26  // Android 8.0+ (cubre ~95% de dispositivos activos)
-        targetSdk = 34  // Target 34 para cumplir requisitos de Google Play 2024
-        versionCode = 7
-        versionName = "1.4.0"
+        applicationId = "com.zoka.zkapriv"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 11
+        versionName = "0.1.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
         // Soporte para todas las arquitecturas (dispositivos físicos y emuladores)
@@ -42,9 +35,9 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = rootProject.file(keystoreProperties["storeFile"] as String? ?: "keystore/massapay-release-key.jks")
+            storeFile = rootProject.file(keystoreProperties["storeFile"] as String? ?: "keystore/zkapriv-release-key.jks")
             storePassword = keystoreProperties["storePassword"] as String? ?: ""
-            keyAlias = keystoreProperties["keyAlias"] as String? ?: "massapay"
+            keyAlias = keystoreProperties["keyAlias"] as String? ?: "zkapriv"
             keyPassword = keystoreProperties["keyPassword"] as String? ?: ""
         }
     }
@@ -55,14 +48,9 @@ android {
             isShrinkResources = false
             signingConfig = signingConfigs.getByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            buildConfigField("String", "WALLETCONNECT_PROJECT_ID", "\"${localProperties.getProperty("WALLETCONNECT_PROJECT_ID", "")}\"")
         }
         debug {
             isMinifyEnabled = false
-            // IMPORTANTE: Sin applicationIdSuffix para que debug y release usen el mismo ID
-            // Esto permite actualizar de debug a release sin desinstalar
-            signingConfig = signingConfigs.getByName("release")  // Misma firma que release
-            buildConfigField("String", "WALLETCONNECT_PROJECT_ID", "\"${localProperties.getProperty("WALLETCONNECT_PROJECT_ID", "")}\"")
         }
     }
 
@@ -71,9 +59,6 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "META-INF/DEPENDENCIES"
-        }
-        jniLibs {
-            useLegacyPackaging = true  // Mejor compatibilidad con dispositivos antiguos
         }
     }
 

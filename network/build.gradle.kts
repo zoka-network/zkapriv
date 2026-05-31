@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     id("com.android.library")
     id("kotlin-android")
     id("kotlin-kapt")
@@ -6,8 +6,8 @@ plugins {
 }
 
 android {
-    namespace = "com.massapay.android.network"
-    compileSdk = 34
+    namespace = "com.zoka.zkapriv.network"
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 26
@@ -19,6 +19,10 @@ android {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     compileOptions {

@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Wrapper drawable to add padding around the foreground PNG so it isn't clipped by launcher masks -->
+<!--
+    Adaptive icon foreground. Android masks the outer 33% of the 108dp
+    icon (safe zone is the inner 72dp), so we inset the raw foreground
+    bitmap to keep the ZKAPriv logo fully visible under circular and
+    squircle launcher masks instead of getting cropped at the edges.
+-->
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:inset="18%"
+    android:inset="20%"
     android:drawable="@mipmap/ic_launcher_foreground" />
