@@ -70,10 +70,11 @@ class SendViewModel @Inject constructor(
     }
 
     private suspend fun loadBalance(address: String) {
-        val scanKey = accountManager.activeAccount.value
+        val matchingAccount = accountManager.activeAccount.value
             ?.takeIf { it.address == address }
-            ?.let { accountManager.getScanKeyForAccount(it.id) }
-        when (val balRes = zokaRepository.getAddressBalance(address, scanKey)) {
+        val scanKey = matchingAccount?.let { accountManager.getScanKeyForAccount(it.id) }
+        val restoreHeight = matchingAccount?.restoreHeight ?: 0L
+        when (val balRes = zokaRepository.getAddressBalance(address, scanKey, restoreHeight)) {
             is com.zoka.zkapriv.core.util.Result.Success -> {
                 val info = balRes.data
                 // Validate sends against `availableAtoms`, not `matureAtoms`.

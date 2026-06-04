@@ -38,13 +38,22 @@ data class ZokaTransactionRequest(
     val publicKeyHex: String? = null
 )
 
-/// Body for POST /private/wallet/send-from-seed. The node uses [seedHex]
-/// (BIP-39 entropy of the recovery phrase) ephemerally to derive the
-/// scan/spend keys, construct the PrivateTransaction with CLSAG + Groth16
-/// proof, and broadcast. The wallet file is wiped on the way out.
+data class ZokaServerPubkeyResponse(
+    @SerializedName("algorithm")
+    val algorithm: String,
+    @SerializedName("public_key_hex")
+    val publicKeyHex: String
+)
+
+/// Body for POST /private/wallet/send-from-seed. The seed is sealed with
+/// the server's X25519 public key and authenticated with AES-256-GCM.
 data class ZokaSendFromSeedRequest(
-    @SerializedName("seed_hex")
-    val seedHex: String,
+    @SerializedName("ephemeral_pubkey_hex")
+    val ephemeralPubkeyHex: String,
+    @SerializedName("nonce_hex")
+    val nonceHex: String,
+    @SerializedName("encrypted_seed_hex")
+    val encryptedSeedHex: String,
     @SerializedName("to")
     val to: String,
     @SerializedName("amount_atoms")
@@ -112,7 +121,9 @@ data class ZokaRawBlockResponse(
 
 data class ZokaRawBlockHeader(
     @SerializedName("block_height")
-    val blockHeight: Long = 0
+    val blockHeight: Long = 0,
+    @SerializedName("hash")
+    val hash: String = ""
 )
 
 data class ZokaRawPrivateCoinbase(

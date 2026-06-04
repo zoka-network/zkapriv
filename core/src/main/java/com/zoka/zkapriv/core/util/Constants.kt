@@ -1,9 +1,9 @@
 package com.zoka.zkapriv.core.util
 
 object Constants {
-    // Network - primary RPC (VPS2) + fallback (VPS1 Bootstrap)
-    const val ZOKA_MAINNET_RPC         = "http://157.230.5.103:3000/"
-    const val ZOKA_MAINNET_RPC_FALLBACK = "http://159.223.119.216:3000/"
+    // Network - primary RPC (BOOT) + fallback (VPS2)
+    const val ZOKA_MAINNET_RPC         = "http://159.223.119.216:3000/"
+    const val ZOKA_MAINNET_RPC_FALLBACK = "http://157.230.5.103:3000/"
     const val COINGECKO_API = "https://api.coingecko.com/api/v3/"
     const val ZOKA_CHAIN_ID = "zoka-mainnet-v1"
 

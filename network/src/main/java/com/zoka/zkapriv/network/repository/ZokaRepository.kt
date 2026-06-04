@@ -9,9 +9,12 @@ import com.zoka.zkapriv.core.model.TransactionStatus
 import com.zoka.zkapriv.core.util.Constants
 import com.zoka.zkapriv.core.util.Result
 import com.zoka.zkapriv.network.api.ZokaNodeApi
+import com.zoka.zkapriv.network.crypto.SeedEnvelopeEncryption
 import com.zoka.zkapriv.network.model.ZokaSendFromSeedRequest
 import com.zoka.zkapriv.network.model.ZokaStatsResponse
 import com.zoka.zkapriv.network.model.ZokaTransactionRequest
+import com.zoka.zkapriv.network.nativebridge.LocalProverClient
+import com.zoka.zkapriv.security.storage.SecureStorage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
@@ -34,10 +37,23 @@ class ZokaRepository @Inject constructor(
     private val zokaNodeApi: ZokaNodeApi,
     private val sharedPreferences: android.content.SharedPreferences,
     private val rpcSettings: com.zoka.zkapriv.network.config.RpcSettings,
+    private val secureStorage: SecureStorage,
+    private val localProverClient: LocalProverClient,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context
 ) {
     private val gson = Gson()
     private val MAX_CACHED_TRANSACTIONS = 50
+
+    // On-device private transaction builder (Rust JNI engine). Staging builds
+    // select it explicitly; release stays remote until coordinated rollout.
+    private val localTransferBuilder by lazy {
+        com.zoka.zkapriv.network.nativebridge.LocalPrivateTransferBuilder(
+            zokaNodeApi,
+            context,
+            secureStorage,
+            localProverClient
+        )
+    }
 
     // Balance cache: prevents multiple ViewModels from scanning simultaneously
     private val balanceCache = mutableMapOf<String, Pair<BalanceInfo, Long>>()
@@ -86,7 +102,11 @@ class ZokaRepository @Inject constructor(
 
     // ── Balance ───────────────────────────────────────────────────────────────
 
-    suspend fun getAddressBalance(address: String, scanKey: ByteArray? = null): Result<BalanceInfo> {
+    suspend fun getAddressBalance(
+        address: String,
+        scanKey: ByteArray? = null,
+        restoreHeight: Long = 0
+    ): Result<BalanceInfo> {
         return try {
             val cacheKey = if (scanKey != null) "${address}_full" else address
             val hasPendingOutbound = rpcSettings.readPendingSends(address).isNotEmpty()
@@ -120,7 +140,7 @@ class ZokaRepository @Inject constructor(
                 }
                 val height = zokaNodeApi.getChainHeight().height
                 val rawInfo = if (scanKey != null) {
-                    scanFullBalance(address, scanKey, height)
+                    scanFullBalance(address, scanKey, height, restoreHeight)
                 } else {
                     scanCoinbaseBalance(address, height)
                 }
@@ -253,7 +273,12 @@ class ZokaRepository @Inject constructor(
 
     // ── Full UTXO scan (requires scan key) ───────────────────────────────────
 
-    private suspend fun scanFullBalance(address: String, scanKeyBytes: ByteArray, chainHeight: Long): BalanceInfo {
+    private suspend fun scanFullBalance(
+        address: String,
+        scanKeyBytes: ByteArray,
+        chainHeight: Long,
+        restoreHeight: Long = 0
+    ): BalanceInfo {
         // Derive scan scalar: SHA256(scanKey) as LE mod L
         val scanScalar = Ristretto255.scalarFromSecretBytes(scanKeyBytes)
         // Derive spend key: SHA256("zoka-private-wallet-spend-v1" || 0x1f || scanKey)
@@ -268,8 +293,12 @@ class ZokaRepository @Inject constructor(
         val myCoinbases = mutableListOf<CoinbaseEntry>()
         val allPrivateTxHashes = linkedSetOf<String>()
 
-        // Phase 1: Scan blocks for our coinbase outputs and private tx hashes
-        var from = 1L
+        // Phase 1: Scan blocks for our coinbase outputs and private tx hashes.
+        // A freshly-created wallet records its creation height as restoreHeight,
+        // so we skip every block before it existed — there is provably nothing
+        // of ours there. Imported wallets pass 0 and scan from genesis. This is
+        // the safe optimization: it never drops history a wallet could own.
+        var from = restoreHeight.coerceAtLeast(1L)
         while (from <= chainHeight) {
             val to = minOf(from + RAW_BLOCK_SCAN_BATCH_SIZE - 1, chainHeight)
             val response = zokaNodeApi.getRawBlocksRange(from, to)
@@ -528,6 +557,21 @@ class ZokaRepository @Inject constructor(
         }
     }
 
+    /**
+     * Current chain tip height, or null if the node is unreachable. Used when
+     * creating a brand-new wallet to record its restore height — a wallet with
+     * no prior history only needs to scan from "now" onward, which avoids
+     * re-walking the entire chain on every balance refresh.
+     */
+    suspend fun getCurrentChainHeight(): Long? {
+        return try {
+            zokaNodeApi.getChainHeight().height
+        } catch (e: Exception) {
+            Log.w("ZokaRepository", "getCurrentChainHeight failed: ${e.message}")
+            null
+        }
+    }
+
     // ── Send transaction ──────────────────────────────────────────────────────
     //
     // Protocol note: the Zoka node derives sender as bech32("zka", sha256(pubkey)[0:20])
@@ -551,18 +595,12 @@ class ZokaRepository @Inject constructor(
     /**
      * Send a Zoka private transfer.
      *
-     * The [scanKeyHex] (BIP-39 entropy of the user's recovery phrase) is
-     * the only secret the node needs: it derives the spending key, builds
-     * the Groth16 + CLSAG private transaction in a sandboxed temp dir,
-     * broadcasts to the mempool and wipes the wallet file before the
-     * response returns. Mobile clients cannot generate Groth16 proofs
-     * themselves (multi-MB trusted setup, slow snark math on ARM), so
-     * delegating the build step to the node is the only practical path.
-     *
-     * Trust model: while the seed travels over HTTPS, a malicious RPC
-     * operator could in principle log it. Users who want full custody
-     * should configure Custom RPC (Settings → Network) to point at their
-     * own node before sending.
+     * The selected build variant decides the proving path:
+     * - release keeps the transitional encrypted remote builder so the
+     *   currently published APK keeps working during the dual-stack window.
+     * - staging builds the private transaction locally and submits the
+     *   canonical JSON body to /private/tx, so the recovery seed never leaves
+     *   the phone.
      *
      * [publicKey] and [from] are still accepted so existing call-sites
      * compile; only [scanKeyHex], [to], [amount] and [fee] are actually
@@ -577,8 +615,6 @@ class ZokaRepository @Inject constructor(
         publicKey: String
     ): Result<String> {
         return try {
-            Log.d("ZokaRepository", "sendTransaction (send-from-seed) initiated")
-
             val amountAtoms = zkaToAtoms(amount)
             val feeAtoms = zkaToAtoms(fee).coerceAtLeast(0L)
             val seedHex = scanKeyHex.removePrefix("0x")
@@ -590,18 +626,32 @@ class ZokaRepository @Inject constructor(
                 return Result.Error(IllegalArgumentException("Invalid recipient address"))
             }
 
-            val req = ZokaSendFromSeedRequest(
-                seedHex = seedHex,
-                to = to,
-                amountAtoms = amountAtoms,
-                feeAtoms = feeAtoms
-            )
-            val resp = zokaNodeApi.sendFromSeed(req)
-            Log.i("ZokaRepository", "TX submitted hash=${resp.hash} status=${resp.status}")
+            val seedBytesForValidation = tryHexToBytes(seedHex)
+                ?: return Result.Error(IllegalArgumentException("Invalid recovery seed"))
+            seedBytesForValidation.fill(0)
+
+            val hash = when (com.zoka.zkapriv.network.BuildConfig.ZOKA_PRIVATE_SEND_MODE) {
+                "local-self-custody" -> submitLocalSelfCustodyTransfer(
+                    from = from,
+                    to = to,
+                    amountAtoms = amountAtoms,
+                    feeAtoms = feeAtoms,
+                    seedHex = seedHex
+                )
+                "remote-seed" -> submitRemoteSeedTransfer(
+                    to = to,
+                    amountAtoms = amountAtoms,
+                    feeAtoms = feeAtoms,
+                    seedHex = seedHex
+                )
+                else -> throw IllegalStateException(
+                    "Unsupported private send mode: ${com.zoka.zkapriv.network.BuildConfig.ZOKA_PRIVATE_SEND_MODE}"
+                )
+            }
 
             addTransactionToCache(
                 from, Transaction(
-                    hash = resp.hash,
+                    hash = hash,
                     from = from,
                     to = to,
                     amount = amount,
@@ -619,16 +669,15 @@ class ZokaRepository @Inject constructor(
             // the tx hash committed in a block (or 30 min elapses).
             rpcSettings.recordPendingSend(
                 address = from,
-                hash = resp.hash,
+                hash = hash,
                 reservedAtoms = amountAtoms + feeAtoms
             )
 
-            // The seed-derived wallet was built ephemerally on the RPC;
-            // local in-memory caches no longer reflect chain state, so
+            // Local in-memory caches no longer reflect chain state, so
             // invalidate them and let the next dashboard refresh re-scan.
             invalidateAllInMemoryCaches()
 
-            Result.Success(resp.hash)
+            Result.Success(hash)
         } catch (e: HttpException) {
             // Retrofit's HttpException.message() only carries the HTTP
             // status line ("HTTP 500"); the actual server explanation is
@@ -645,6 +694,93 @@ class ZokaRepository @Inject constructor(
             Log.e("ZokaRepository", "sendTransaction error: ${e.message}", e)
             Result.Error(e)
         }
+    }
+
+    // ── Private send backends ─────────────────────────────────────────────────
+
+    private suspend fun submitLocalSelfCustodyTransfer(
+        from: String,
+        to: String,
+        amountAtoms: Long,
+        feeAtoms: Long,
+        seedHex: String
+    ): String {
+        Log.d(
+            "ZokaRepository",
+            "sendTransaction (local self-custody build) initiated"
+        )
+        val pendingBodies = rpcSettings.expirePendingSends(from).map { pending ->
+            try {
+                gson.toJson(zokaNodeApi.getPrivateTransactionRaw(pending.hash))
+            } catch (error: Exception) {
+                throw IllegalStateException(
+                    "Cannot build local transfer while pending body ${pending.hash} is unavailable",
+                    error
+                )
+            }
+        }
+        val built = localTransferBuilder.build(
+            from = from,
+            to = to,
+            amountAtoms = amountAtoms,
+            feeAtoms = feeAtoms,
+            seedHex = seedHex,
+            pendingBodies = pendingBodies,
+            privateProofVersion = com.zoka.zkapriv.network.BuildConfig.ZOKA_PRIVATE_PROOF_VERSION,
+            privateProofProfile = com.zoka.zkapriv.network.BuildConfig.ZOKA_PRIVATE_PROOF_PROFILE
+        )
+        // Phase-by-phase timing breakdown from the native prover. This tells us
+        // where the wall-clock time actually goes (proof vs in-memory wallet
+        // replay vs nullifier rebuild) instead of guessing. Logged at INFO so it
+        // shows up in a normal logcat capture.
+        built.metrics?.let { m ->
+            Log.i("ZokaProofTiming", "metrics=$m")
+        }
+        val submitted = zokaNodeApi.submitPrivateTx(built.body)
+        val submittedHash = submitted.get("hash")?.asString.orEmpty()
+        check(submittedHash == built.hash) {
+            "Node returned a different hash for locally-built private transaction"
+        }
+        Log.i(
+            "ZokaRepository",
+            "TX submitted hash=${built.hash} via local self-custody proving"
+        )
+        return built.hash
+    }
+
+    private suspend fun submitRemoteSeedTransfer(
+        to: String,
+        amountAtoms: Long,
+        feeAtoms: Long,
+        seedHex: String
+    ): String {
+        Log.d("ZokaRepository", "sendTransaction (encrypted server-side build) initiated")
+        val seedBytes = tryHexToBytes(seedHex)
+            ?: throw IllegalArgumentException("Invalid recovery seed")
+        val envelope = try {
+            val serverKey = zokaNodeApi.getServerPubkey()
+            check(serverKey.algorithm == "x25519-aes256gcm-v1") {
+                "Unsupported server encryption algorithm"
+            }
+            SeedEnvelopeEncryption.encrypt(seedBytes, serverKey.publicKeyHex)
+        } finally {
+            seedBytes.fill(0)
+        }
+        val response = zokaNodeApi.sendFromSeed(
+            ZokaSendFromSeedRequest(
+                ephemeralPubkeyHex = envelope.ephemeralPubkeyHex,
+                nonceHex = envelope.nonceHex,
+                encryptedSeedHex = envelope.encryptedSeedHex,
+                to = to,
+                amountAtoms = amountAtoms,
+                feeAtoms = feeAtoms
+            )
+        )
+        Log.i(
+            "ZokaRepository",
+            "TX submitted hash=${response.hash} via encrypted /private/wallet/send-from-seed"
+        )
+        return response.hash
     }
 
     // ── Transaction history ───────────────────────────────────────────────────

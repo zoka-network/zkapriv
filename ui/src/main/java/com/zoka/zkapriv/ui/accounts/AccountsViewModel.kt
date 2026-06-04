@@ -6,6 +6,7 @@ import com.zoka.zkapriv.core.model.Account
 import com.zoka.zkapriv.core.model.AccountColor
 import com.zoka.zkapriv.core.model.CreateAccountRequest
 import com.zoka.zkapriv.core.model.UpdateAccountRequest
+import com.zoka.zkapriv.network.repository.ZokaRepository
 import com.zoka.zkapriv.security.wallet.AccountManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,7 +17,8 @@ import javax.inject.Inject
 
 @HiltViewModel
 class AccountsViewModel @Inject constructor(
-    private val accountManager: AccountManager
+    private val accountManager: AccountManager,
+    private val repository: ZokaRepository
 ) : ViewModel() {
     
     val accounts: StateFlow<List<Account>> = accountManager.accounts
@@ -42,7 +44,12 @@ class AccountsViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isCreating = true, error = null)
             
             val request = CreateAccountRequest(name = name, color = color)
-            val result = accountManager.createAccount(request)
+            // A brand-new wallet has no on-chain history. Anchor its scan start
+            // at the current tip so balance scans skip the whole prior chain.
+            // If the tip can't be fetched (offline), fall back to 0 (scan all) —
+            // correctness over speed.
+            val restoreHeight = repository.getCurrentChainHeight() ?: 0L
+            val result = accountManager.createAccount(request, restoreHeight)
             
             result.fold(
                 onSuccess = { account ->

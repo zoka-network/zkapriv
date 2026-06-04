@@ -10,6 +10,7 @@ import com.zoka.zkapriv.network.model.ZokaPrivateTransactionResponse
 import com.zoka.zkapriv.network.model.ZokaRawBlocksRangeResponse
 import com.zoka.zkapriv.network.model.ZokaSendFromSeedRequest
 import com.zoka.zkapriv.network.model.ZokaSendFromSeedResponse
+import com.zoka.zkapriv.network.model.ZokaServerPubkeyResponse
 import com.zoka.zkapriv.network.model.ZokaStatsResponse
 import com.zoka.zkapriv.network.model.ZokaTransactionRequest
 import com.zoka.zkapriv.network.model.ZokaTransactionResponse
@@ -27,6 +28,9 @@ interface ZokaNodeApi {
 
     @GET("chain/height")
     suspend fun getChainHeight(): ZokaChainHeightResponse
+
+    @GET("crypto/server-pubkey")
+    suspend fun getServerPubkey(): ZokaServerPubkeyResponse
 
     @GET("accounts/{address}")
     suspend fun getAccount(@Path("address") address: String): ZokaAccountResponse
@@ -58,11 +62,27 @@ interface ZokaNodeApi {
     @GET("private/tx/{hash}")
     suspend fun getPrivateTransaction(@Path("hash") hash: String): ZokaPrivateTransactionResponse
 
+    /// Raw private-tx body as the node stored it. The local transfer engine
+    /// needs every field of the original transaction (not just the parsed
+    /// subset in [ZokaPrivateTransactionResponse]) to use it as a spendable
+    /// input, so this returns the untouched JSON object.
+    @GET("private/tx/{hash}")
+    suspend fun getPrivateTransactionRaw(@Path("hash") hash: String): com.google.gson.JsonObject
+
     /// Build, sign and broadcast a Zoka private transaction on behalf of
-    /// the client. The body carries the BIP-39 entropy of the user's
-    /// recovery phrase; the node uses it ephemerally inside a sandboxed
+    /// the client. The body carries the encrypted BIP-39 entropy; the node
+    /// decrypts and uses it ephemerally inside a sandboxed
     /// temp dir (CLI shell-out under the hood) to construct the Groth16
     /// proof + CLSAG ring signature, then wipes the wallet file.
     @POST("private/wallet/send-from-seed")
     suspend fun sendFromSeed(@Body request: ZokaSendFromSeedRequest): ZokaSendFromSeedResponse
+
+    /// Publish a locally-built private transaction. The body is the canonical
+    /// PrivateTransaction JSON produced by the on-device engine
+    /// (LocalPrivateTransferBuilder). The node validates it (proofs, nullifier
+    /// conflicts), stores it, and gossips it to miners. This is the canonical
+    /// optional self-custody path for devices that can afford local proof
+    /// generation.
+    @POST("private/tx")
+    suspend fun submitPrivateTx(@Body body: com.google.gson.JsonObject): com.google.gson.JsonObject
 }

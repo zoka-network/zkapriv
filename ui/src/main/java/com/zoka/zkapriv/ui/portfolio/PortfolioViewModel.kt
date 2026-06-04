@@ -62,7 +62,7 @@ class PortfolioViewModel @Inject constructor(
                 async {
                     try {
                         val scanKey = accountManager.getScanKeyForAccount(account.id)
-                        when (val res = zokaRepository.getAddressBalance(account.address, scanKey)) {
+                        when (val res = zokaRepository.getAddressBalance(account.address, scanKey, account.restoreHeight)) {
                             is Result.Success -> {
                                 val info = res.data
                                 AccountSummary(

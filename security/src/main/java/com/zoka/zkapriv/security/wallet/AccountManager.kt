@@ -80,7 +80,7 @@ class AccountManager @Inject constructor(
      * Initialize from existing wallet (migration from old system).
      * Always re-derives the Zoka zka1... address from the stored key.
      */
-    fun initializeFromExistingWallet(): Result<Account> {
+    fun initializeFromExistingWallet(restoreHeight: Long = 0): Result<Account> {
         return try {
             if (_accounts.value.isNotEmpty()) {
                 return Result.success(_activeAccount.value ?: _accounts.value.first())
@@ -124,9 +124,13 @@ class AccountManager @Inject constructor(
                 scanKeyHex = finalScanKeyHex,
                 mnemonic = finalMnemonic,
                 isActive = true,
-                color = AccountColor.BLUE
+                color = AccountColor.BLUE,
+                // Only a freshly CREATED wallet passes a non-zero restoreHeight
+                // (the chain tip at creation). Imported wallets pass 0 so their
+                // older history is still scanned — never skip an imported past.
+                restoreHeight = restoreHeight
             )
-            
+
             // Save account
             saveAccount(account)
             setActiveAccount(account.id)
@@ -141,7 +145,7 @@ class AccountManager @Inject constructor(
     /**
      * Create a new account with a fresh mnemonic/scan key
      */
-    fun createAccount(request: CreateAccountRequest): Result<Account> {
+    fun createAccount(request: CreateAccountRequest, restoreHeight: Long = 0): Result<Account> {
         return try {
             val newMnemonic = mnemonicManager.generateMnemonic(24)
 
@@ -163,7 +167,10 @@ class AccountManager @Inject constructor(
                 scanKeyHex = scanKeyHex,
                 mnemonic = newMnemonic,
                 isActive = false,
-                color = color
+                color = color,
+                // A brand-new wallet has no prior on-chain history; record the
+                // current tip so balance scans skip everything before it.
+                restoreHeight = restoreHeight
             )
             
             saveAccount(account)
@@ -448,6 +455,7 @@ class AccountManager @Inject constructor(
                 put("createdAt", account.createdAt)
                 put("lastUsed", account.lastUsed)
                 put("color", account.color.name)
+                put("restoreHeight", account.restoreHeight)
             }
             jsonArray.put(json)
         }
@@ -518,7 +526,10 @@ class AccountManager @Inject constructor(
                         AccountColor.valueOf(json.getString("color"))
                     } catch (e: Exception) {
                         AccountColor.BLUE
-                    }
+                    },
+                    // Older stored accounts predate restoreHeight; default 0
+                    // makes them scan from genesis (safe, no history lost).
+                    restoreHeight = json.optLong("restoreHeight", 0L)
                 )
                 accounts.add(account)
             }

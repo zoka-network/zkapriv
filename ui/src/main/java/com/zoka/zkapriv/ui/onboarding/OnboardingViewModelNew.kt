@@ -19,7 +19,8 @@ class OnboardingViewModelNew @Inject constructor(
     private val walletManager: WalletManager,
     private val secureStorage: SecureStorage,
     private val keystoreManager: KeystoreManager,
-    private val accountManager: com.zoka.zkapriv.security.wallet.AccountManager
+    private val accountManager: com.zoka.zkapriv.security.wallet.AccountManager,
+    private val repository: com.zoka.zkapriv.network.repository.ZokaRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(OnboardingStateNew())
@@ -32,6 +33,7 @@ class OnboardingViewModelNew @Inject constructor(
                 _uiState.update {
                     it.copy(
                         seedWords = mnemonic.split(" "),
+                        isNewWallet = true,
                         currentStep = OnboardingStepNew.GENERATE_SEED,
                         error = null
                     )
@@ -55,6 +57,7 @@ class OnboardingViewModelNew @Inject constructor(
                     _uiState.update {
                         it.copy(
                             seedWords = listOf("SCAN_KEY_HEX", scanKey), // Special marker
+                            isNewWallet = false,
                             currentStep = OnboardingStepNew.SETUP_PIN,
                             error = null
                         )
@@ -65,6 +68,7 @@ class OnboardingViewModelNew @Inject constructor(
                         _uiState.update {
                             it.copy(
                                 seedWords = seedPhrase.trim().split(" "),
+                                isNewWallet = false,
                                 currentStep = OnboardingStepNew.SETUP_PIN,
                                 error = null
                             )
@@ -136,8 +140,17 @@ class OnboardingViewModelNew @Inject constructor(
                 try {
                     android.util.Log.d("Onboarding", "Clearing old accounts before init...")
                     accountManager.clearAllAccounts()
-                    android.util.Log.d("Onboarding", "Initializing account with address: $address")
-                    accountManager.initializeFromExistingWallet()
+                    // For a freshly created wallet (no prior history), anchor the
+                    // scan at the current chain tip so it doesn't walk the whole
+                    // chain. Imported wallets pass 0 to scan from genesis. If the
+                    // tip is unreachable (offline), fall back to 0 (scan all).
+                    val restoreHeight = if (_uiState.value.isNewWallet) {
+                        repository.getCurrentChainHeight() ?: 0L
+                    } else {
+                        0L
+                    }
+                    android.util.Log.d("Onboarding", "Initializing account with address: $address (restoreHeight=$restoreHeight)")
+                    accountManager.initializeFromExistingWallet(restoreHeight)
                     android.util.Log.d("Onboarding", "Account initialized successfully")
                 } catch (e: Exception) {
                     android.util.Log.e("Onboarding", "Failed to init default account", e)
@@ -185,6 +198,10 @@ class OnboardingViewModelNew @Inject constructor(
 data class OnboardingStateNew(
     val currentStep: OnboardingStepNew = OnboardingStepNew.WELCOME,
     val seedWords: List<String> = emptyList(),
+    // True only for the create-new-wallet path. Drives whether we anchor the
+    // balance scan at the current chain tip (new wallet, no past) or scan from
+    // genesis (imported wallet, may have history). Default false = scan all.
+    val isNewWallet: Boolean = false,
     val error: String? = null
 )
 

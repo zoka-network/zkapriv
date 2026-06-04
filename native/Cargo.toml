@@ -1,0 +1,27 @@
+[package]
+name = "zoka-mobile"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "zoka_mobile"
+crate-type = ["cdylib"]
+
+[dependencies]
+jni = "0.21"
+# `mobile` makes the trusted-setup params load WITHOUT the per-point subgroup
+# check (params are digest-verified APK assets) — turns a ~minutes cold load
+# into seconds on-device. `randomx` stays off (no mining on the phone).
+zoka = { path = "../..", default-features = false, features = ["mobile"] }
+
+# Aggressive release optimization for the on-device Groth16 prover. This is a
+# standalone crate (not a workspace member), so its own [profile.release]
+# governs the .so. LTO + a single codegen unit let the optimizer inline across
+# the crypto crates (bellman/bls12_381/curve25519), which is where the proving
+# time is spent. opt-level=3 is the release default but pinned here explicitly.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+

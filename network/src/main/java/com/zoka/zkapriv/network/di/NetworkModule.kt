@@ -53,8 +53,8 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideRetrofit(okHttpClient: OkHttpClient): Retrofit {
-        // Base URL is VPS2 (primary RPC). RpcEndpointInterceptor rewrites
-        // per-request and falls back to VPS1 Bootstrap on connection failure.
+        // Base URL is BOOT (primary RPC). RpcEndpointInterceptor rewrites
+        // per-request to the freshest node and falls back on connection failure.
         return Retrofit.Builder()
             .baseUrl(Constants.ZOKA_MAINNET_RPC)
             .client(okHttpClient)

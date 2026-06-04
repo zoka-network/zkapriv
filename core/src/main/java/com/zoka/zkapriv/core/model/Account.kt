@@ -18,7 +18,13 @@ data class Account(
     val isActive: Boolean = false,     // Whether this is the currently active account
     val createdAt: Long = System.currentTimeMillis(),
     val lastUsed: Long = System.currentTimeMillis(),
-    val color: AccountColor = AccountColor.BLUE  // UI color for visual distinction
+    val color: AccountColor = AccountColor.BLUE,  // UI color for visual distinction
+    // Block height from which balance scanning starts. A freshly CREATED wallet
+    // has no prior history, so it is set to the chain height at creation time —
+    // the scanner then only walks recent blocks instead of the whole chain
+    // (huge speedup). An IMPORTED wallet keeps 0 so its older transactions are
+    // not missed. 0 = scan from genesis (safe default).
+    val restoreHeight: Long = 0
 )
 
 /**

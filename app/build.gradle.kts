@@ -33,6 +33,16 @@ android {
         }
     }
 
+    // The Rust transfer engine (libzoka_mobile.so) and its C++ runtime
+    // (libc++_shared.so) live in native/jniLibs, produced by
+    // native/build-android.ps1. Without this srcDir the .so files never make
+    // it into the APK and the native send path fails with dlopen errors.
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDirs("../native/jniLibs")
+        }
+    }
+
     signingConfigs {
         create("release") {
             storeFile = rootProject.file(keystoreProperties["storeFile"] as String? ?: "keystore/zkapriv-release-key.jks")
@@ -51,6 +61,13 @@ android {
         }
         debug {
             isMinifyEnabled = false
+            applicationIdSuffix = ".benchmark"
+        }
+        create("staging") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".staging"
+            versionNameSuffix = "-staging"
+            matchingFallbacks += listOf("release")
         }
     }
 
@@ -140,5 +157,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito:mockito-core:5.5.0")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test:runner:1.5.2")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2023.10.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 }

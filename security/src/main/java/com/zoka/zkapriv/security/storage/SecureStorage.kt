@@ -48,6 +48,18 @@ class SecureStorage @Inject constructor(
     fun getPublicKey(alias: String): String? {
         return prefs.getString("public_key_$alias", null)
     }
+
+    fun storeLocalPrivateChainSnapshot(snapshotJson: String) {
+        prefs.edit().putString(KEY_LOCAL_PRIVATE_CHAIN_SNAPSHOT, snapshotJson).apply()
+    }
+
+    fun getLocalPrivateChainSnapshot(): String? {
+        return prefs.getString(KEY_LOCAL_PRIVATE_CHAIN_SNAPSHOT, null)
+    }
+
+    fun clearLocalPrivateChainSnapshot() {
+        prefs.edit().remove(KEY_LOCAL_PRIVATE_CHAIN_SNAPSHOT).apply()
+    }
     
     fun setActiveWallet(address: String) {
         prefs.edit().putString(Constants.PREF_KEY_ACTIVE_WALLET, address).apply()
@@ -103,5 +115,9 @@ class SecureStorage @Inject constructor(
         // on next launch. Simply calling clear() leaves the file on disk; the next
         // EncryptedSharedPreferences.create() would fail to decode the corrupt header.
         File(context.filesDir.parent, "shared_prefs/${Constants.PREF_ENCRYPTED_FILE}.xml").delete()
+    }
+
+    private companion object {
+        const val KEY_LOCAL_PRIVATE_CHAIN_SNAPSHOT = "local_private_chain_snapshot_v1"
     }
 }

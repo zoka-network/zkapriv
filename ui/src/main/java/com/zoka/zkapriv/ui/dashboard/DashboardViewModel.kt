@@ -121,7 +121,8 @@ class DashboardViewModel @Inject constructor(
                 if (scanKey == null) {
                     android.util.Log.w("DashboardVM", "No scan key for $address — received private outputs will be invisible (coinbase-only scan)")
                 }
-                when (val balRes = zokaRepository.getAddressBalance(address, scanKey)) {
+                val restoreHeight = matchingAccount?.restoreHeight ?: 0L
+                when (val balRes = zokaRepository.getAddressBalance(address, scanKey, restoreHeight)) {
                     is com.zoka.zkapriv.core.util.Result.Success -> {
                         val info = balRes.data
                         matureBalance = zokaRepository.formatAtoms(info.matureAtoms)
