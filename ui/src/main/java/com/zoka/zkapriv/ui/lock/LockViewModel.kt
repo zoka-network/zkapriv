@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.zoka.zkapriv.security.biometric.BiometricManager
 import com.zoka.zkapriv.security.storage.SecureStorage
+import com.zoka.zkapriv.security.wallet.AccountManager
 import com.zoka.zkapriv.ui.reset.WalletResetCoordinator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,15 +17,25 @@ import javax.inject.Inject
 class LockViewModel @Inject constructor(
     private val secureStorage: SecureStorage,
     private val biometricManager: BiometricManager,
-    private val walletResetCoordinator: WalletResetCoordinator
+    private val walletResetCoordinator: WalletResetCoordinator,
+    private val accountManager: AccountManager
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(LockState())
     val uiState: StateFlow<LockState> = _uiState
 
     init {
-        _uiState.update { 
-            it.copy(biometricAvailable = secureStorage.isBiometricEnabled())
+        // The lock screen greets the user by the label they gave their active
+        // account (falls back to the first account). It's just a display name,
+        // safe to read before unlock; never shows keys or balances.
+        val name = accountManager.activeAccount.value?.name
+            ?: accountManager.accounts.value.firstOrNull()?.name
+            ?: ""
+        _uiState.update {
+            it.copy(
+                biometricAvailable = secureStorage.isBiometricEnabled(),
+                walletName = name
+            )
         }
     }
 
@@ -88,6 +99,7 @@ class LockViewModel @Inject constructor(
 
 data class LockState(
     val isUnlocked: Boolean = false,
+    val walletName: String = "",
     val biometricAvailable: Boolean = false,
     val showBiometricPrompt: Boolean = false,
     val error: String? = null,

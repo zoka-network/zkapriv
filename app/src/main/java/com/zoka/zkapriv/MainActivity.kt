@@ -189,6 +189,16 @@ class MainActivity : FragmentActivity() {
                     }
                 ) {
                     composable("lock") {
+                        // Let the lock screen's top gradient bleed behind the
+                        // status bar: make it transparent and flip the icon
+                        // tint to match the gradient (dark band in light theme
+                        // -> light icons, and vice-versa in dark theme).
+                        SideEffect {
+                            val w = (view.context as FragmentActivity).window
+                            val ic = WindowCompat.getInsetsController(w, view)
+                            w.statusBarColor = android.graphics.Color.TRANSPARENT
+                            ic.isAppearanceLightStatusBars = darkTheme
+                        }
                         LockScreen(
                             onUnlocked = {
                                 sessionManager.unlock()

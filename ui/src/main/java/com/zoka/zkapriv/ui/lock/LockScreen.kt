@@ -1,80 +1,46 @@
-﻿package com.zoka.zkapriv.ui.lock
+package com.zoka.zkapriv.ui.lock
 
 import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Backspace
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.filled.Backspace
-import androidx.compose.material.icons.filled.LockReset
-import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.Security
-import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import kotlinx.coroutines.delay
 
 /**
- * Typewriter effect composable for animated text display
+ * Unlock screen. Fintech-style layout: a decorative top gradient (black in
+ * light theme, mirrored to a light band in dark theme), the ZOKA NETWORK
+ * wordmark, a personal greeting using the active account label, a
+ * security/session notice, then a primary biometric button with a PIN
+ * fallback. "Forgot your PIN?" opens the existing wallet-reset flow.
  */
-@Composable
-fun TypewriterText(
-    text: String,
-    modifier: Modifier = Modifier,
-    fontSize: androidx.compose.ui.unit.TextUnit,
-    fontWeight: FontWeight,
-    color: Color,
-    letterSpacing: androidx.compose.ui.unit.TextUnit = 0.sp,
-    delayPerChar: Long = 80L,
-    initialDelay: Long = 500L
-) {
-    var displayedText by remember { mutableStateOf("") }
-    
-    LaunchedEffect(text) {
-        displayedText = ""
-        delay(initialDelay)
-        text.forEachIndexed { index, _ ->
-            displayedText = text.substring(0, index + 1)
-            delay(delayPerChar)
-        }
-    }
-    
-    Text(
-        text = displayedText,
-        fontSize = fontSize,
-        fontWeight = fontWeight,
-        color = color,
-        letterSpacing = letterSpacing,
-        modifier = modifier
-    )
-}
-
 @Composable
 fun LockScreen(
     onUnlocked: () -> Unit,
@@ -85,20 +51,30 @@ fun LockScreen(
     val context = LocalContext.current as FragmentActivity
     var pin by remember { mutableStateOf("") }
     var showPinInput by remember { mutableStateOf(false) }
-    
+
     // Theme detection based on background luminance
     val backgroundColor = MaterialTheme.colorScheme.background
     val isDarkTheme = remember(backgroundColor) {
         (backgroundColor.red * 0.299f + backgroundColor.green * 0.587f + backgroundColor.blue * 0.114f) < 0.5f
     }
-    
-    // Consistent colors
+
     val buttonContainerColor = if (isDarkTheme) Color.White else Color.Black
     val buttonContentColor = if (isDarkTheme) Color.Black else Color.White
     val cardColor = MaterialTheme.colorScheme.surfaceVariant
     val textPrimary = MaterialTheme.colorScheme.onBackground
     val textSecondary = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
-    
+    val accent = MaterialTheme.colorScheme.primary
+
+    // Decorative top gradient. Light theme: black at the top fading down into
+    // the light background. Dark theme: mirrored — a light band fading down
+    // into the dark background.
+    val gradientBrush = Brush.verticalGradient(
+        colors = if (isDarkTheme)
+            listOf(Color.White.copy(alpha = 0.16f), backgroundColor.copy(alpha = 0f))
+        else
+            listOf(Color.Black.copy(alpha = 0.90f), backgroundColor.copy(alpha = 0f))
+    )
+
     val biometricPrompt = remember {
         BiometricPrompt(
             context,
@@ -116,40 +92,29 @@ fun LockScreen(
             }
         )
     }
-    
+
     val promptInfo = remember {
         BiometricPrompt.PromptInfo.Builder()
             .setTitle("Unlock zkapriv")
             .setSubtitle("Use your biometric credential")
-            .setNegativeButtonText("Use PIN Instead")
+            .setNegativeButtonText("Use PIN")
             .build()
     }
-    
+
     LaunchedEffect(uiState.showBiometricPrompt) {
         if (uiState.showBiometricPrompt) {
             biometricPrompt.authenticate(promptInfo)
             viewModel.resetBiometricPrompt()
         }
     }
-    
-    LaunchedEffect(uiState.isUnlocked) {
-        if (uiState.isUnlocked) {
-            onUnlocked()
-        }
-    }
+    LaunchedEffect(uiState.isUnlocked) { if (uiState.isUnlocked) onUnlocked() }
+    LaunchedEffect(uiState.walletReset) { if (uiState.walletReset) onWalletReset() }
 
-    LaunchedEffect(uiState.walletReset) {
-        if (uiState.walletReset) {
-            onWalletReset()
-        }
-    }
-    
     // Entrance animation
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { visible = true }
-    
     val logoScale by animateFloatAsState(
-        targetValue = if (visible) 1f else 0.5f,
+        targetValue = if (visible) 1f else 0.6f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "logoScale"
     )
@@ -163,336 +128,287 @@ fun LockScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(backgroundColor)
-            .statusBarsPadding()
-            .navigationBarsPadding()
     ) {
-        // Version text at top right
+        // Full-bleed decorative gradient band at the top (behind the status bar).
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(360.dp)
+                .align(Alignment.TopCenter)
+                .background(gradientBrush)
+        )
+
+        // Version label, top-right.
         Text(
             text = "v0.1.0",
             fontSize = 12.sp,
-            color = textSecondary,
+            color = if (isDarkTheme) textSecondary else Color.White.copy(alpha = 0.7f),
             fontWeight = FontWeight.Medium,
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(top = 16.dp, end = 24.dp)
+                .statusBarsPadding()
+                .padding(top = 8.dp, end = 24.dp)
         )
-        
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp)
                 .graphicsLayer { alpha = contentAlpha },
-            horizontalAlignment = Alignment.CenterHorizontally
+            horizontalAlignment = Alignment.Start
         ) {
-            // Top section — official ZOKA NETWORK wordmark in place of the
-            // legacy circular badge. Height-only sizing preserves the
-            // horizontal aspect ratio of the LOGOPORTADA artwork. The
-            // entrance scale animation still runs so the screen retains
-            // the same arrival feel.
-            val logoHeight = if (showPinInput) 48.dp else 96.dp
-            val topPadding = if (showPinInput) 16.dp else 40.dp
+            Spacer(modifier = Modifier.height(if (showPinInput) 24.dp else 64.dp))
 
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(top = topPadding)
-            ) {
-                androidx.compose.foundation.Image(
-                    painter = painterResource(id = com.zoka.zkapriv.ui.R.drawable.logoportada),
-                    contentDescription = "Zoka Network",
-                    modifier = Modifier
-                        .height(logoHeight)
-                        .graphicsLayer {
-                            scaleX = logoScale
-                            scaleY = logoScale
-                        },
-                    colorFilter = if (isDarkTheme)
-                        androidx.compose.ui.graphics.ColorFilter.tint(Color.White)
-                    else
-                        null
-                )
+            // ZOKA NETWORK wordmark. White-tinted on dark theme; on light theme
+            // it sits over the dark gradient band, so tint it white there too.
+            Image(
+                painter = painterResource(id = com.zoka.zkapriv.ui.R.drawable.logoportada),
+                contentDescription = "Zoka Network",
+                modifier = Modifier
+                    .height(if (showPinInput) 40.dp else 60.dp)
+                    .graphicsLayer {
+                        scaleX = logoScale
+                        scaleY = logoScale
+                    },
+                colorFilter = ColorFilter.tint(Color.White)
+            )
 
-                Spacer(modifier = Modifier.height(if (showPinInput) 16.dp else 28.dp))
+            Spacer(modifier = Modifier.height(if (showPinInput) 24.dp else 72.dp))
 
-                // App name with typewriter effect (only when not in PIN mode)
-                if (!showPinInput) {
-                    TypewriterText(
-                        text = "zkapriv",
-                        fontSize = 38.sp,
-                        fontWeight = FontWeight.Black,
-                        color = textPrimary,
-                        letterSpacing = (-1).sp,
-                        delayPerChar = 100L,
-                        initialDelay = 300L
-                    )
-                } else {
+            if (!showPinInput) {
+                // Greeting + reset link
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        text = "zkapriv",
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Black,
+                        text = if (uiState.walletName.isNotBlank())
+                            "Hello, ${uiState.walletName}!"
+                        else "Welcome back",
+                        fontSize = 30.sp,
+                        fontWeight = FontWeight.Bold,
                         color = textPrimary,
-                        letterSpacing = (-1).sp
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        onClick = { viewModel.showForgotPasswordDialog(true) },
+                        contentPadding = PaddingValues(horizontal = 4.dp)
+                    ) {
+                        Text(
+                            text = "Forgot your PIN?",
+                            color = accent,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                // Push the notice + sign-in actions to the bottom of the screen.
+                Spacer(modifier = Modifier.weight(1f))
+
+                // Session / security notice
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = cardColor,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Outlined.Security,
+                            contentDescription = null,
+                            tint = textSecondary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = "Your session expired for security. Sign in again to continue.",
+                            fontSize = 14.sp,
+                            color = textPrimary.copy(alpha = 0.85f)
+                        )
+                    }
+                }
+
+                if (uiState.error != null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = uiState.error!!,
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
                     )
                 }
-                
-                // Only show tagline when not in PIN mode
-                if (!showPinInput) {
-                    Spacer(modifier = Modifier.height(10.dp))
 
-                    // Privacy tagline pill — icon + label communicates the
-                    // wallet's positioning without needing a second logo.
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = if (isDarkTheme) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.05f)
+                Spacer(modifier = Modifier.height(40.dp))
+
+                if (uiState.biometricAvailable) {
+                    // Primary: biometric
+                    Button(
+                        onClick = { viewModel.authenticateWithBiometric() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(58.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = buttonContainerColor,
+                            contentColor = buttonContentColor
+                        ),
+                        shape = RoundedCornerShape(16.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                Icons.Outlined.PrivacyTip,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = textPrimary
+                        if (uiState.isLoading && !uiState.showBiometricPrompt) {
+                            CircularProgressIndicator(
+                                color = buttonContentColor,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(22.dp)
                             )
+                        } else {
+                            Icon(
+                                Icons.Default.Fingerprint,
+                                contentDescription = null,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Private Wallet",
-                                fontSize = 14.sp,
-                                color = textPrimary,
-                                fontWeight = FontWeight.SemiBold,
-                                letterSpacing = 0.3.sp
+                                "Sign in with biometrics",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(28.dp))
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-            // Middle section - Authentication
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState())
-            ) {
-                if (uiState.biometricAvailable && !showPinInput) {
-                    // Biometric unlock section
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(24.dp),
-                        colors = CardDefaults.cardColors(containerColor = cardColor),
-                        elevation = CardDefaults.cardElevation(
-                            defaultElevation = if (isDarkTheme) 0.dp else 4.dp
-                        )
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(20.dp)
-                        ) {
-                            // Fingerprint icon with pulse animation
-                            val infiniteTransition = rememberInfiniteTransition(label = "biometric_pulse")
-                            val pulseScale by infiniteTransition.animateFloat(
-                                initialValue = 1f,
-                                targetValue = 1.1f,
-                                animationSpec = infiniteRepeatable(
-                                    animation = tween(1200, easing = FastOutSlowInEasing),
-                                    repeatMode = RepeatMode.Reverse
-                                ),
-                                label = "pulse"
-                            )
-                            
-                            Surface(
-                                modifier = Modifier
-                                    .size(80.dp)
-                                    .graphicsLayer {
-                                        scaleX = pulseScale
-                                        scaleY = pulseScale
-                                    },
-                                shape = CircleShape,
-                                color = buttonContainerColor
-                            ) {
-                                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                    Icon(
-                                        Icons.Default.Fingerprint,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(44.dp),
-                                        tint = buttonContentColor
-                                    )
-                                }
-                            }
-                            
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        TextButton(onClick = {
+                            showPinInput = true
+                            viewModel.clearError()
+                        }) {
                             Text(
-                                text = "Tap to Unlock",
-                                fontSize = 18.sp,
+                                "Use PIN",
+                                fontSize = 15.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = textPrimary
                             )
-                            
-                            // Biometric unlock button
-                            Button(
-                                onClick = { viewModel.authenticateWithBiometric() },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(56.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = buttonContainerColor,
-                                    contentColor = buttonContentColor
-                                ),
-                                shape = RoundedCornerShape(16.dp)
-                            ) {
-                                if (uiState.isLoading && !uiState.showBiometricPrompt) {
-                                    CircularProgressIndicator(
-                                        color = buttonContentColor,
-                                        strokeWidth = 2.dp,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                } else {
-                                    Icon(
-                                        Icons.Default.Fingerprint, 
-                                        contentDescription = null,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Text(
-                                        "Unlock with Biometric",
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
                         }
                     }
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    TextButton(
-                        onClick = { 
+                } else {
+                    // No biometric enrolled: PIN is the primary action.
+                    Button(
+                        onClick = {
                             showPinInput = true
                             viewModel.clearError()
-                        }
-                    ) {
-                        Text(
-                            "Use PIN Instead",
-                            fontSize = 15.sp,
-                            color = textSecondary
-                        )
-                    }
-
-                    ForgotPasswordButton(onClick = { viewModel.showForgotPasswordDialog(true) })
-                } else {
-                    // PIN unlock section
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(24.dp),
-                        colors = CardDefaults.cardColors(containerColor = cardColor),
-                        elevation = CardDefaults.cardElevation(
-                            defaultElevation = if (isDarkTheme) 0.dp else 4.dp
-                        )
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(20.dp)
-                        ) {
-                            // Lock icon
-                            Surface(
-                                modifier = Modifier.size(60.dp),
-                                shape = CircleShape,
-                                color = if (uiState.error != null) 
-                                    MaterialTheme.colorScheme.error.copy(alpha = 0.15f) 
-                                else buttonContainerColor
-                            ) {
-                                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                    Icon(
-                                        Icons.Default.Lock,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(28.dp),
-                                        tint = if (uiState.error != null) 
-                                            MaterialTheme.colorScheme.error 
-                                        else buttonContentColor
-                                    )
-                                }
-                            }
-                            
-                            Text(
-                                text = if (uiState.error != null) uiState.error!! else "Enter your PIN",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (uiState.error != null) MaterialTheme.colorScheme.error else textPrimary
-                            )
-                            
-                            // PIN dots
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(16.dp)
-                            ) {
-                                repeat(6) { index ->
-                                    PinDot(
-                                        isFilled = index < pin.length,
-                                        isError = uiState.error != null,
-                                        isDarkTheme = isDarkTheme
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    NumberPad(
-                        onNumberClick = { number ->
-                            if (pin.length < 6) {
-                                if (pin.isEmpty()) {
-                                    viewModel.clearError()
-                                }
-                                pin += number
-                                if (pin.length == 6) {
-                                    viewModel.verifyPin(pin)
-                                    if (uiState.error != null) {
-                                        pin = ""
-                                    }
-                                }
-                            }
                         },
-                        onDeleteClick = {
-                            if (pin.isNotEmpty()) {
-                                pin = pin.dropLast(1)
-                            }
-                        },
-                        isDarkTheme = isDarkTheme,
-                        buttonContainerColor = buttonContainerColor,
-                        buttonContentColor = buttonContentColor
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(58.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = buttonContainerColor,
+                            contentColor = buttonContentColor
+                        ),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(22.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("Sign in with PIN", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            } else {
+                // ── PIN entry state ───────────────────────────────────────────
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = cardColor),
+                    elevation = CardDefaults.cardElevation(
+                        defaultElevation = if (isDarkTheme) 0.dp else 4.dp
                     )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(20.dp)
+                    ) {
+                        Surface(
+                            modifier = Modifier.size(60.dp),
+                            shape = CircleShape,
+                            color = if (uiState.error != null)
+                                MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
+                            else buttonContainerColor
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Icon(
+                                    Icons.Default.Lock,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(28.dp),
+                                    tint = if (uiState.error != null)
+                                        MaterialTheme.colorScheme.error
+                                    else buttonContentColor
+                                )
+                            }
+                        }
 
-                    ForgotPasswordButton(onClick = { viewModel.showForgotPasswordDialog(true) })
+                        Text(
+                            text = if (uiState.error != null) uiState.error!! else "Enter your PIN",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (uiState.error != null) MaterialTheme.colorScheme.error else textPrimary
+                        )
 
-                    if (uiState.biometricAvailable) {
-                        TextButton(
-                            onClick = { 
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            repeat(6) { index ->
+                                PinDot(
+                                    isFilled = index < pin.length,
+                                    isError = uiState.error != null,
+                                    isDarkTheme = isDarkTheme
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                NumberPad(
+                    onNumberClick = { number ->
+                        if (pin.length < 6) {
+                            if (pin.isEmpty()) viewModel.clearError()
+                            pin += number
+                            if (pin.length == 6) {
+                                viewModel.verifyPin(pin)
+                                if (uiState.error != null) pin = ""
+                            }
+                        }
+                    },
+                    onDeleteClick = { if (pin.isNotEmpty()) pin = pin.dropLast(1) },
+                    isDarkTheme = isDarkTheme,
+                    buttonContainerColor = buttonContainerColor,
+                    buttonContentColor = buttonContentColor
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (uiState.biometricAvailable) {
+                            TextButton(onClick = {
                                 showPinInput = false
                                 viewModel.clearError()
                                 pin = ""
+                            }) {
+                                Text("Use biometrics", fontSize = 14.sp, color = textSecondary)
                             }
-                        ) {
-                            Text(
-                                "Use Biometric Instead",
-                                fontSize = 14.sp,
-                                color = textSecondary
-                            )
+                        }
+                        TextButton(onClick = { viewModel.showForgotPasswordDialog(true) }) {
+                            Text("Forgot your PIN?", fontSize = 14.sp, color = accent, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
             }
 
-            // Bottom spacer
             Spacer(modifier = Modifier.height(24.dp))
         }
 
@@ -500,9 +416,7 @@ fun LockScreen(
         if (uiState.showForgotPasswordDialog) {
             AlertDialog(
                 onDismissRequest = {
-                    if (!uiState.isLoading) {
-                        viewModel.showForgotPasswordDialog(false)
-                    }
+                    if (!uiState.isLoading) viewModel.showForgotPasswordDialog(false)
                 },
                 icon = {
                     Icon(
@@ -513,11 +427,7 @@ fun LockScreen(
                     )
                 },
                 title = {
-                    Text(
-                        text = "Reset wallet?",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp
-                    )
+                    Text(text = "Reset wallet?", fontWeight = FontWeight.Bold, fontSize = 20.sp)
                 },
                 text = {
                     Column {
@@ -547,9 +457,7 @@ fun LockScreen(
                 },
                 confirmButton = {
                     Button(
-                        onClick = {
-                            viewModel.resetWallet()
-                        },
+                        onClick = { viewModel.resetWallet() },
                         enabled = !uiState.isLoading,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error
@@ -587,8 +495,7 @@ private fun PinDot(isFilled: Boolean, isError: Boolean = false, isDarkTheme: Boo
         isError -> MaterialTheme.colorScheme.error
         else -> if (isDarkTheme) Color.White else Color.Black
     }
-    
-    // Animation for fill state
+
     val scale by animateFloatAsState(
         targetValue = if (isFilled) 1.2f else 1f,
         animationSpec = spring(
@@ -597,7 +504,7 @@ private fun PinDot(isFilled: Boolean, isError: Boolean = false, isDarkTheme: Boo
         ),
         label = "dotScale"
     )
-    
+
     Box(
         modifier = Modifier
             .size(18.dp)
@@ -627,12 +534,11 @@ private fun NumberPad(
 ) {
     val numberButtonColor = if (isDarkTheme) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.05f)
     val numberTextColor = if (isDarkTheme) Color.White else Color.Black
-    
+
     Column(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier.padding(horizontal = 24.dp)
     ) {
-        // Rows 1-3
         listOf(
             listOf("1", "2", "3"),
             listOf("4", "5", "6"),
@@ -654,7 +560,6 @@ private fun NumberPad(
             }
         }
 
-        // Row 4: Empty, 0, Delete
         Row(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.fillMaxWidth()
@@ -667,7 +572,6 @@ private fun NumberPad(
                 containerColor = numberButtonColor,
                 contentColor = numberTextColor
             )
-            // Delete button with icon
             Surface(
                 onClick = onDeleteClick,
                 modifier = Modifier
@@ -684,45 +588,6 @@ private fun NumberPad(
                         tint = numberTextColor.copy(alpha = 0.7f)
                     )
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ForgotPasswordButton(onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Icon(
-                Icons.Default.LockReset,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.error
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Column {
-                Text(
-                    text = "Can't access your wallet?",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.error
-                )
-                Text(
-                    text = "Reset with your recovery phrase",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
-                )
             }
         }
     }

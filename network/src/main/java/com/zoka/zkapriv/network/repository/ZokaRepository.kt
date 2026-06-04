@@ -154,6 +154,10 @@ class ZokaRepository @Inject constructor(
                         scannedHeight = rawInfo.scannedHeight
                     )
                 }
+                // Tie pending-send reservations to the tx's real lifecycle
+                // (runs after the scan, so the confirmed set is fresh) before
+                // summing them into pendingOut.
+                reconcilePendingSendsWithNode(address)
                 Result.Success(rawInfo.withReconciledPendings(address))
             }
         } catch (e: CancellationException) {
@@ -213,6 +217,40 @@ class ZokaRepository @Inject constructor(
             }
         }
         return copy(pendingOutAtoms = pendingOut)
+    }
+
+    /**
+     * Keep "pending out" reservations in step with each tx's real lifecycle
+     * instead of a blind 30-min timer. Run after a scan so the confirmed set
+     * is fresh. For every reserved send:
+     *   - if the scan already saw it confirmed in a block, drop the
+     *     reservation (the spend is now reflected in `mature`);
+     *   - else, if the node still knows the tx (waiting in a mempool / stored),
+     *     refresh its timestamp so the TTL can't drop a tx that is merely
+     *     waiting for a miner — this was the cause of the balance "snapping
+     *     back to full" while a verified tx sat unmined.
+     * A genuinely dropped tx (node 404 + never confirmed) is left to the TTL
+     * fallback in [withReconciledPendings], so a single-node propagation gap
+     * never releases funds early.
+     */
+    private suspend fun reconcilePendingSendsWithNode(address: String) {
+        for (p in rpcSettings.readPendingSends(address)) {
+            if (confirmedPrivateTxHashes.contains(p.hash)) {
+                rpcSettings.removePendingSend(address, p.hash)
+                continue
+            }
+            val nodeKnowsTx = try {
+                zokaNodeApi.getPrivateTransaction(p.hash)
+                true
+            } catch (_: Exception) {
+                false
+            }
+            if (nodeKnowsTx) {
+                // Refresh the reservation's timestamp so the TTL window
+                // restarts while the tx is still alive on the node.
+                rpcSettings.recordPendingSend(address, p.hash, p.reservedAtoms)
+            }
+        }
     }
 
     /**
