@@ -921,7 +921,8 @@ private fun Web3TransactionItem(
     textSecondary: Color
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+
     // Match the quick-actions toolbar: solid black card with white content.
     // `accentColorSent` / `accentColorReceive` / `accentColorSuccess` /
     // `cardBackground` are still received so the call-sites compile, but
@@ -931,9 +932,15 @@ private fun Web3TransactionItem(
         modifier = Modifier
             .fillMaxWidth()
             .clickable {
-                val url = "${com.zoka.zkapriv.core.util.Constants.ZOKA_EXPLORER_TX_URL}${transaction.hash}"
-                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-                context.startActivity(intent)
+                // Private txs aren't (and shouldn't be) on a public explorer,
+                // so copy the hash for the user to verify on their own node
+                // instead of opening a link that 404s and would leak the hash.
+                if (transaction.hash.isNotBlank()) {
+                    clipboard.setText(AnnotatedString(transaction.hash))
+                    android.widget.Toast
+                        .makeText(context, "Transaction hash copied", android.widget.Toast.LENGTH_SHORT)
+                        .show()
+                }
             },
         colors = CardDefaults.cardColors(
             containerColor = Color.Black
@@ -998,32 +1005,40 @@ private fun Web3TransactionItem(
                         style = MaterialTheme.typography.bodyLarge.copy(
                             fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                         ),
-                        color = Color.White
+                        color = if (isSent) Color.White else Color(0xFF34C759)
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    val (statusColor, statusIcon, statusLabel) = when (transaction.status) {
+                        TransactionStatus.PENDING ->
+                            Triple(Color(0xFFF5A623), Icons.Outlined.Schedule, "Pending")
+                        TransactionStatus.CONFIRMED ->
+                            Triple(Color(0xFF34C759), Icons.Outlined.CheckCircle, "Confirmed")
+                        TransactionStatus.FAILED ->
+                            Triple(Color(0xFFFF3B30), Icons.Outlined.ErrorOutline, "Failed")
+                    }
+                    Surface(
+                        color = statusColor.copy(alpha = 0.18f),
+                        shape = RoundedCornerShape(8.dp)
                     ) {
-                        Surface(
-                            color = Color.White.copy(alpha = 0.15f),
-                            shape = RoundedCornerShape(8.dp)
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
+                            Icon(
+                                imageVector = statusIcon,
+                                contentDescription = null,
+                                tint = statusColor,
+                                modifier = Modifier.size(12.dp)
+                            )
                             Text(
-                                transaction.status.name,
+                                statusLabel,
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                                 ),
-                                color = Color.White,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                color = statusColor
                             )
                         }
-                        Icon(
-                            imageVector = Icons.Outlined.OpenInNew,
-                            contentDescription = "View in explorer",
-                            tint = Color.White.copy(alpha = 0.6f),
-                            modifier = Modifier.size(14.dp)
-                        )
                     }
                 }
             }

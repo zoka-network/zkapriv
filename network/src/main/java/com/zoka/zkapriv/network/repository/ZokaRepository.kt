@@ -71,6 +71,10 @@ class ZokaRepository @Inject constructor(
         private const val BALANCE_CACHE_TTL_MS = 30_000L
         private const val FULL_SCAN_CACHE_TTL_MS = 5 * 60 * 1_000L
         private const val PENDING_FULL_SCAN_CACHE_TTL_MS = 10_000L
+        // Only flag a tx FAILED once NO node has its body and it is in no
+        // block for this long — generous so a valid send waiting for a miner
+        // (or only on the peer node) is never falsely marked failed.
+        private const val TX_FAILED_AFTER_MIN = 6 * 60L
         private const val PERSISTENT_CACHE_TTL_MS = 30 * 60 * 1_000L
         private const val BATCH_DELAY_MS = 80L
         private const val PRIVATE_TX_PHASE_DELAY_MS = 2_000L
@@ -367,6 +371,11 @@ class ZokaRepository @Inject constructor(
         val allInputNullifiers = mutableSetOf<String>()
         data class OwnedOutput(val amountAtoms: Long, val nullifierHex: String)
         val ownedOutputs = mutableListOf<OwnedOutput>()
+        // Outputs of OURS, tagged with the tx that paid them. Used after the
+        // scan to surface incoming payments in Recent Activity. A candidate is
+        // only a real "received" if the paying tx wasn't sent by us (otherwise
+        // it's our own change output coming back).
+        val receivedByTx = mutableListOf<Pair<String, Long>>()
 
         if (allPrivateTxHashes.isNotEmpty()) {
             delay(PRIVATE_TX_PHASE_DELAY_MS)
@@ -397,6 +406,7 @@ class ZokaRepository @Inject constructor(
                 if (output.outputId.isBlank() || output.commitment.isBlank()) continue
                 val nullifierHex = deriveNullifierHex(spendKeyRaw, output.outputId, output.commitment)
                 ownedOutputs.add(OwnedOutput(amount, nullifierHex))
+                receivedByTx.add(txHash to amount)
             }
         }
 
@@ -424,6 +434,9 @@ class ZokaRepository @Inject constructor(
                 matureAtoms = matureAtoms.saturatingAdd(owned.amountAtoms)
             }
         }
+
+        // Surface received payments in Recent Activity (skips our own change).
+        recordIncomingTransactions(address, receivedByTx)
 
         Log.d("ZokaRepository", "scanFullBalance: coinbases=${myCoinbases.size} privateTxs=${allPrivateTxHashes.size} ownedOutputs=${ownedOutputs.size} missingTxs=$missingTxCount mature=$matureAtoms immature=$immatureAtoms")
         return BalanceInfo(
@@ -827,7 +840,11 @@ class ZokaRepository @Inject constructor(
         return try {
             val cached = loadTransactionsFromPrefs(address).toMutableList()
             val updated = cached.map { tx ->
-                if (tx.status == TransactionStatus.PENDING) {
+                // Re-resolve PENDING (might have confirmed) AND FAILED (might
+                // have been a false negative that actually landed in a block —
+                // e.g. a valid send that sat unmined past the old timeout).
+                // CONFIRMED is terminal and never re-queried.
+                if (tx.status == TransactionStatus.PENDING || tx.status == TransactionStatus.FAILED) {
                     try { tx.copy(status = resolveTransactionStatus(tx.hash, tx.timestamp)) }
                     catch (e: Exception) { tx }
                 } else tx
@@ -863,28 +880,38 @@ class ZokaRepository @Inject constructor(
         if (confirmedPrivateTxHashes.contains(hash)) return TransactionStatus.CONFIRMED
         val ageMin = (System.currentTimeMillis() - timestamp) / 60_000
 
-        // Private tx path (every send-from-seed call lands here).
+        // Private tx path (every send lands here).
         try {
             val privateTx = zokaNodeApi.getPrivateTransaction(hash)
-            // The body is stored on the node — it's either in the
-            // private mempool or already mined into a block. We can't
-            // distinguish cheaply here, so keep it PENDING; the dashboard
-            // balance scan will re-credit/-debit the wallet once the tx
-            // is actually included in a block.
+            // The node HAS the body, so the tx is ALIVE — either waiting in a
+            // mempool or already mined. A stored body is never a failure, so we
+            // only ever return FAILED when the node says so explicitly. The
+            // status is usually "Verified" while pending; anything that isn't
+            // an explicit terminal state falls through to the on-chain check.
             when (privateTx.status.lowercase()) {
                 "confirmed", "finalized" -> return TransactionStatus.CONFIRMED
                 "failed", "rejected" -> return TransactionStatus.FAILED
             }
-            if (isPrivateTxConfirmedOnChain(hash)) return TransactionStatus.CONFIRMED
-            if (ageMin > 30 && !isPrivateTxStillPending(hash)) return TransactionStatus.FAILED
-            return TransactionStatus.PENDING
+            // Mined once its hash is committed in a block; otherwise it stays
+            // PENDING for as long as it takes a miner to include it. We do NOT
+            // time it out to FAILED here — that was the bug that flipped a
+            // valid, still-pending send to "failed" after 30 minutes when no
+            // miner was running.
+            return if (isPrivateTxConfirmedOnChain(hash))
+                TransactionStatus.CONFIRMED
+            else
+                TransactionStatus.PENDING
         } catch (e: retrofit2.HttpException) {
             if (e.code() != 404) {
                 // 5xx / rate-limit / etc. → not the tx's fault, keep
                 // pending so the next refresh can retry.
                 return TransactionStatus.PENDING
             }
-            // 404 on the private endpoint — try the public one below.
+            // 404 on the private endpoint: this node has no body for the hash.
+            // It may be mined-and-pruned, never-propagated-here, or dropped.
+            // If it's committed in a block it's confirmed; otherwise fall
+            // through to the public endpoint / age heuristic.
+            if (isPrivateTxConfirmedOnChain(hash)) return TransactionStatus.CONFIRMED
         } catch (e: Exception) {
             return TransactionStatus.PENDING
         }
@@ -899,10 +926,12 @@ class ZokaRepository @Inject constructor(
             }
         } catch (e: retrofit2.HttpException) {
             if (e.code() == 404) {
-                // Neither endpoint has it. Brand-new sends look like this
-                // while they propagate, so keep PENDING for the first 30
-                // minutes; after that assume the tx was dropped.
-                if (ageMin > 30) TransactionStatus.FAILED else TransactionStatus.PENDING
+                // No node has a body for this hash AND it isn't in any block.
+                // A genuinely dropped tx looks like this, but so does one that
+                // only propagated to the other node, so keep it PENDING for a
+                // generous window before flagging it as failed.
+                if (ageMin > TX_FAILED_AFTER_MIN) TransactionStatus.FAILED
+                else TransactionStatus.PENDING
             } else {
                 TransactionStatus.PENDING
             }
@@ -927,14 +956,6 @@ class ZokaRepository @Inject constructor(
             from = to + 1
         }
         return false
-    }
-
-    private suspend fun isPrivateTxStillPending(hash: String): Boolean {
-        return try {
-            zokaNodeApi.getMempoolPending().pending.any { it.hash == hash }
-        } catch (e: Exception) {
-            true
-        }
     }
 
     suspend fun estimateTransactionFee(@Suppress("UNUSED_PARAMETER") amount: String): Result<String> {
@@ -1073,5 +1094,46 @@ class ZokaRepository @Inject constructor(
         val list = loadTransactionsFromPrefs(address).toMutableList()
         list.add(0, transaction)
         saveTransactionsToPrefs(address, list.take(MAX_CACHED_TRANSACTIONS))
+    }
+
+    /**
+     * Persist newly-seen incoming payments so they show up in Recent Activity.
+     * `received` is every output of ours found in the scan, tagged with the tx
+     * that paid it. We drop:
+     *   - outputs from txs WE sent (those are our own change coming back), and
+     *   - txs already in the history (dedup by hash).
+     * The sender of a private payment is intentionally unknown, so `from` is
+     * left blank and the UI renders it as "Received". Entries are CONFIRMED
+     * because we only see them once their tx is committed in a scanned block.
+     */
+    private fun recordIncomingTransactions(address: String, received: List<Pair<String, Long>>) {
+        if (received.isEmpty()) return
+        val existing = loadTransactionsFromPrefs(address)
+        val knownHashes = existing.map { it.hash }.toHashSet()
+        val mySentHashes = existing
+            .filter { it.from.equals(address, ignoreCase = true) }
+            .map { it.hash }
+            .toHashSet()
+
+        // One incoming entry per paying tx (sum its owned outputs).
+        val byTx = received.groupBy({ it.first }, { it.second }).mapValues { it.value.sum() }
+        val newIncoming = byTx.mapNotNull { (txHash, atoms) ->
+            if (txHash in mySentHashes || txHash in knownHashes) return@mapNotNull null
+            Transaction(
+                hash = txHash,
+                from = "",
+                to = address,
+                amount = formatAtoms(atoms),
+                token = Token(address = "", symbol = "ZKA", decimals = 9, name = "Zoka"),
+                timestamp = System.currentTimeMillis(),
+                status = TransactionStatus.CONFIRMED,
+                fee = "0"
+            )
+        }
+        if (newIncoming.isEmpty()) return
+        val merged = (newIncoming + existing)
+            .sortedByDescending { it.timestamp }
+            .take(MAX_CACHED_TRANSACTIONS)
+        saveTransactionsToPrefs(address, merged)
     }
 }
