@@ -12,7 +12,12 @@ android {
     defaultConfig {
         minSdk = 26
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "ZOKA_PRIVATE_SEND_MODE", "\"remote-seed\"")
+        // Default for ALL builds (release + debug): prove on-device so the
+        // recovery seed never leaves the phone. The transitional "remote-seed"
+        // mode (server builds the proof) is retired now that v1 on-device
+        // proving works end-to-end (~14s), which lets us disable the node's
+        // /private/wallet/send-from-seed endpoint for release.
+        buildConfigField("String", "ZOKA_PRIVATE_SEND_MODE", "\"local-self-custody\"")
         buildConfigField("int", "ZOKA_PRIVATE_PROOF_VERSION", "1")
         buildConfigField("String", "ZOKA_PRIVATE_PROOF_PROFILE", "\"private_tx\"")
     }
