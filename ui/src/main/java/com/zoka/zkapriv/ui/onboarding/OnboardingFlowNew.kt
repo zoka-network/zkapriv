@@ -14,9 +14,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 
 @OptIn(ExperimentalAnimationApi::class)
@@ -28,6 +30,29 @@ fun OnboardingFlowNew(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showImportDialog by remember { mutableStateOf(false) }
+
+    // Drive the status bar per step. The Welcome screen has a dark top gradient,
+    // so make the status bar transparent there (the gradient bleeds behind the
+    // clock/battery) with light icons; every other onboarding step is plain
+    // white, so use a solid white bar with dark icons. This SideEffect runs on
+    // every recomposition / step change, so it wins over the theme's own
+    // status-bar SideEffect (which would otherwise keep it white).
+    val view = LocalView.current
+    SideEffect {
+        val window = (view.context as? android.app.Activity)?.window
+        if (window != null) {
+            val controller = WindowCompat.getInsetsController(window, view)
+            if (uiState.currentStep == OnboardingStepNew.WELCOME) {
+                window.statusBarColor = android.graphics.Color.TRANSPARENT
+                controller.isAppearanceLightStatusBars = false
+            } else {
+                window.statusBarColor = android.graphics.Color.WHITE
+                controller.isAppearanceLightStatusBars = true
+            }
+            window.navigationBarColor = android.graphics.Color.WHITE
+            controller.isAppearanceLightNavigationBars = true
+        }
+    }
 
     // Force light theme for all onboarding screens
     // Override the color scheme to use light colors

@@ -215,15 +215,10 @@ class MainActivity : FragmentActivity() {
                     }
                     
                     composable("onboarding") {
-                        // Force light theme for onboarding (both system bars and content)
-                        SideEffect {
-                            val window = (view.context as FragmentActivity).window
-                            val insetsController = WindowCompat.getInsetsController(window, view)
-                            window.statusBarColor = Color(0xFFFFFFFF).toArgb()
-                            window.navigationBarColor = Color(0xFFFFFFFF).toArgb()
-                            insetsController.isAppearanceLightStatusBars = true
-                            insetsController.isAppearanceLightNavigationBars = true
-                        }
+                        // System-bar colors for onboarding are owned per-step by
+                        // OnboardingFlowNew: the Welcome step uses a transparent
+                        // status bar so its top gradient bleeds behind it; the other
+                        // steps use a solid white bar with dark icons.
                         ZkaPrivTheme(darkTheme = false) {
                             OnboardingFlowNew(
                                 onComplete = {

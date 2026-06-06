@@ -21,12 +21,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.view.WindowCompat
 
 /**
  * Wallet entry screen (create / recover). Styled to match the biometric
@@ -54,22 +52,9 @@ fun WelcomeScreenNew(
     val textPrimary = MaterialTheme.colorScheme.onBackground
     val textSecondary = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
     val accent = MaterialTheme.colorScheme.primary
-
-    // Match the LockScreen: while this screen is shown, make the status bar
-    // transparent so the top gradient band bleeds behind it, with icons tinted
-    // to the band (light icons over the dark band). Restore the onboarding
-    // default (solid white bar, dark icons) when leaving for the next step.
-    val view = LocalView.current
-    DisposableEffect(isDarkTheme) {
-        val window = (view.context as? android.app.Activity)?.window
-        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
-        window?.statusBarColor = android.graphics.Color.TRANSPARENT
-        controller?.isAppearanceLightStatusBars = isDarkTheme
-        onDispose {
-            window?.statusBarColor = android.graphics.Color.WHITE
-            controller?.isAppearanceLightStatusBars = true
-        }
-    }
+    // Note: the transparent status bar (so the gradient bleeds behind it) is
+    // driven from OnboardingFlowNew per step — a SideEffect there wins over the
+    // theme's status-bar SideEffect on every recomposition.
 
     // Decorative top gradient band: black→transparent (light), white→transparent (dark).
     val gradientBrush = Brush.verticalGradient(
@@ -144,6 +129,17 @@ fun WelcomeScreenNew(
             )
 
             Spacer(modifier = Modifier.height(72.dp))
+
+            // Wallet name, kept subtle as an overline above the heading.
+            Text(
+                text = "ZKAPRIV",
+                fontSize = 12.sp,
+                letterSpacing = 4.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = textSecondary
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
 
             Text(
                 text = "Your private wallet",
