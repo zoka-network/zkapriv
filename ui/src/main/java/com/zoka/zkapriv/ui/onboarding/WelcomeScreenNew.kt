@@ -1,46 +1,37 @@
 package com.zoka.zkapriv.ui.onboarding
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.graphics.graphicsLayer
-import kotlinx.coroutines.delay
 
+/**
+ * Wallet entry screen (create / recover). Styled to match the biometric
+ * LockScreen: a decorative top gradient band, the white ZOKA NETWORK wordmark,
+ * a version label, a bold heading, and the primary actions anchored to the
+ * bottom — with theme-aware black/white buttons and a soft entrance animation.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WelcomeScreenNew(
@@ -49,290 +40,215 @@ fun WelcomeScreenNew(
 ) {
     var showTermsDialog by remember { mutableStateOf(false) }
     var acceptedTerms by remember { mutableStateOf(false) }
-    
-    // Staggered entrance animations
-    var titleVisible by remember { mutableStateOf(false) }
-    var subtitleVisible by remember { mutableStateOf(false) }
-    var buttonsVisible by remember { mutableStateOf(false) }
-    var termsVisible by remember { mutableStateOf(false) }
-    var footerVisible by remember { mutableStateOf(false) }
-    
-    LaunchedEffect(Unit) {
-        delay(300)
-        titleVisible = true
-        delay(200)
-        subtitleVisible = true
-        delay(300)
-        buttonsVisible = true
-        delay(200)
-        termsVisible = true
-        delay(200)
-        footerVisible = true
+
+    // Theme detection based on background luminance (same approach as LockScreen).
+    val backgroundColor = MaterialTheme.colorScheme.background
+    val isDarkTheme = remember(backgroundColor) {
+        (backgroundColor.red * 0.299f + backgroundColor.green * 0.587f + backgroundColor.blue * 0.114f) < 0.5f
     }
-    
-    // Button press animations
-    var createButtonPressed by remember { mutableStateOf(false) }
-    var importButtonPressed by remember { mutableStateOf(false) }
-    
-    val createButtonScale by animateFloatAsState(
-        targetValue = if (createButtonPressed) 0.95f else 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "createButtonScale"
+
+    val buttonContainerColor = if (isDarkTheme) Color.White else Color.Black
+    val buttonContentColor = if (isDarkTheme) Color.Black else Color.White
+    val textPrimary = MaterialTheme.colorScheme.onBackground
+    val textSecondary = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+    val accent = MaterialTheme.colorScheme.primary
+
+    // Decorative top gradient band: black→transparent (light), white→transparent (dark).
+    val gradientBrush = Brush.verticalGradient(
+        colors = if (isDarkTheme)
+            listOf(Color.White.copy(alpha = 0.16f), backgroundColor.copy(alpha = 0f))
+        else
+            listOf(Color.Black.copy(alpha = 0.90f), backgroundColor.copy(alpha = 0f))
     )
-    
-    val importButtonScale by animateFloatAsState(
-        targetValue = if (importButtonPressed) 0.95f else 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "importButtonScale"
+
+    // Entrance animation (mirrors LockScreen).
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { visible = true }
+    val logoScale by animateFloatAsState(
+        targetValue = if (visible) 1f else 0.6f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "logoScale"
+    )
+    val contentAlpha by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(500),
+        label = "contentAlpha"
     )
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
-            .navigationBarsPadding()
+            .background(backgroundColor)
     ) {
+        // Full-bleed decorative gradient band at the top (behind the status bar).
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(360.dp)
+                .align(Alignment.TopCenter)
+                .background(gradientBrush)
+        )
+
+        // Version label, top-right.
+        Text(
+            text = "v0.1.0",
+            fontSize = 12.sp,
+            color = if (isDarkTheme) textSecondary else Color.White.copy(alpha = 0.7f),
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .statusBarsPadding()
+                .padding(top = 8.dp, end = 24.dp)
+        )
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp)
+                .graphicsLayer { alpha = contentAlpha },
+            horizontalAlignment = Alignment.Start
         ) {
-            ZokaAnimatedLogo()
+            Spacer(modifier = Modifier.height(64.dp))
 
-            Spacer(modifier = Modifier.height(24.dp))
+            // ZOKA NETWORK wordmark, white over the dark gradient band.
+            Image(
+                painter = painterResource(id = com.zoka.zkapriv.ui.R.drawable.logoportada),
+                contentDescription = "Zoka Network",
+                modifier = Modifier
+                    .height(60.dp)
+                    .graphicsLayer {
+                        scaleX = logoScale
+                        scaleY = logoScale
+                    },
+                colorFilter = ColorFilter.tint(Color.White)
+            )
 
-            // Animated Title
-            AnimatedVisibility(
-                visible = titleVisible,
-                enter = fadeIn(animationSpec = tween(500)) + slideInVertically(
-                    initialOffsetY = { 30 },
-                    animationSpec = tween(500)
-                )
-            ) {
-                Text(
-                    text = "ZKAPRIV",
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    letterSpacing = 2.sp
-                )
-            }
+            Spacer(modifier = Modifier.height(72.dp))
+
+            Text(
+                text = "Your private wallet",
+                fontSize = 30.sp,
+                fontWeight = FontWeight.Bold,
+                color = textPrimary
+            )
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Animated Subtitle
-            AnimatedVisibility(
-                visible = subtitleVisible,
-                enter = fadeIn(animationSpec = tween(500)) + slideInVertically(
-                    initialOffsetY = { 20 },
-                    animationSpec = tween(500)
-                )
+            Text(
+                text = "ZK Privacy · Self-Custodial · Zoka Network",
+                fontSize = 15.sp,
+                color = textSecondary
+            )
+
+            // Push the actions to the bottom of the screen.
+            Spacer(modifier = Modifier.weight(1f))
+
+            // Primary: Create New Wallet (theme-aware black/white).
+            Button(
+                onClick = {
+                    if (acceptedTerms) onCreateWallet() else showTermsDialog = true
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(58.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = buttonContainerColor,
+                    contentColor = buttonContentColor
+                ),
+                shape = RoundedCornerShape(16.dp)
             ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(22.dp))
+                Spacer(modifier = Modifier.width(10.dp))
+                Text("Create New Wallet", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Secondary: Recover / Import Wallet (theme-aware outline).
+            OutlinedButton(
+                onClick = {
+                    if (acceptedTerms) onImportWallet() else showTermsDialog = true
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(58.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = textPrimary),
+                border = BorderStroke(2.dp, textPrimary.copy(alpha = 0.85f)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(22.dp))
+                Spacer(modifier = Modifier.width(10.dp))
+                Text("Recover Wallet", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Terms acceptance.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(
+                    checked = acceptedTerms,
+                    onCheckedChange = { acceptedTerms = it },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = accent,
+                        uncheckedColor = textSecondary,
+                        checkmarkColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                )
+                Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = "ZK Privacy · Self-Custodial · Zoka Network",
-                    fontSize = 15.sp,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
-                    textAlign = TextAlign.Center
+                    text = "I accept the",
+                    color = textPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium
                 )
-            }
-
-            Spacer(modifier = Modifier.height(64.dp))
-
-            // Animated Buttons
-            AnimatedVisibility(
-                visible = buttonsVisible,
-                enter = fadeIn(animationSpec = tween(500)) + slideInVertically(
-                    initialOffsetY = { 40 },
-                    animationSpec = tween(500)
-                )
-            ) {
-                Column {
-                    // Create New Wallet Button - ALWAYS BLACK with WHITE text
-                    Button(
-                        onClick = {
-                            if (acceptedTerms) {
-                                onCreateWallet()
-                            } else {
-                                showTermsDialog = true
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp)
-                            .scale(createButtonScale)
-                            .pointerInput(Unit) {
-                                detectTapGestures(
-                                    onPress = {
-                                        createButtonPressed = true
-                                        tryAwaitRelease()
-                                        createButtonPressed = false
-                                    }
-                                )
-                            },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.Black,
-                            contentColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(14.dp),
-                        elevation = ButtonDefaults.buttonElevation(
-                            defaultElevation = 4.dp,
-                            pressedElevation = 2.dp
-                        )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp),
-                            tint = Color.White
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = "Create New Wallet",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Import Wallet Button - BLACK border and BLACK text with animation
-                    OutlinedButton(
-                        onClick = {
-                            if (acceptedTerms) {
-                                onImportWallet()
-                            } else {
-                                showTermsDialog = true
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp)
-                            .scale(importButtonScale)
-                            .pointerInput(Unit) {
-                                detectTapGestures(
-                                    onPress = {
-                                        importButtonPressed = true
-                                        tryAwaitRelease()
-                                        importButtonPressed = false
-                                    }
-                                )
-                            },
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = Color.Black
-                        ),
-                        border = androidx.compose.foundation.BorderStroke(2.dp, Color.Black),
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Download,
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp),
-                            tint = Color.Black
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = "Import Wallet",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.Black
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // Animated Terms Checkbox
-            AnimatedVisibility(
-                visible = termsVisible,
-                enter = fadeIn(animationSpec = tween(400)) + slideInVertically(
-                    initialOffsetY = { 20 },
-                    animationSpec = tween(400)
-                )
-            ) {
-                // Terms Checkbox with info icon
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Start
+                TextButton(
+                    onClick = { showTermsDialog = true },
+                    contentPadding = PaddingValues(horizontal = 4.dp)
                 ) {
-                    Checkbox(
-                        checked = acceptedTerms,
-                        onCheckedChange = { acceptedTerms = it },
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = MaterialTheme.colorScheme.primary,
-                            uncheckedColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                            checkmarkColor = MaterialTheme.colorScheme.onPrimary
-                        )
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "I accept the ",
-                        color = MaterialTheme.colorScheme.onBackground,
+                        text = "Terms & Conditions",
+                        color = accent,
                         fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Bold
                     )
-                    TextButton(
-                        onClick = { showTermsDialog = true },
-                        modifier = Modifier.padding(0.dp),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
-                    ) {
-                        Text(
-                            text = "Terms & Conditions",
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(4.dp))
-                    IconButton(
-                        onClick = { showTermsDialog = true },
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Info,
-                            contentDescription = "View Terms",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                }
+                IconButton(onClick = { showTermsDialog = true }, modifier = Modifier.size(24.dp)) {
+                    Icon(
+                        Icons.Outlined.Info,
+                        contentDescription = "View Terms",
+                        tint = accent,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Animated Footer
-            AnimatedVisibility(
-                visible = footerVisible,
-                enter = fadeIn(animationSpec = tween(400))
+            // Footer
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "Zoka Network - MainNet",
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
-                        fontSize = 12.sp
-                    )
-                    
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    Text(
-                        text = "Developed by Natosh Zoka",
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
+                Text(
+                    text = "Zoka Network · MainNet",
+                    color = textSecondary,
+                    fontSize = 12.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Developed by Natosh Zoka",
+                    color = textPrimary.copy(alpha = 0.4f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 
@@ -376,8 +292,8 @@ fun WelcomeScreenNew(
                         showTermsDialog = false
                     },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.Black,
-                        contentColor = Color.White
+                        containerColor = buttonContainerColor,
+                        contentColor = buttonContentColor
                     ),
                     shape = RoundedCornerShape(12.dp)
                 ) {
@@ -387,61 +303,11 @@ fun WelcomeScreenNew(
             dismissButton = {
                 TextButton(
                     onClick = { showTermsDialog = false },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = Color.Black
-                    )
+                    colors = ButtonDefaults.textButtonColors(contentColor = textPrimary)
                 ) {
                     Text("Cancel")
                 }
             }
         )
-    }
-}
-
-@Composable
-private fun ZokaAnimatedLogo() {
-    // Entrance animation (fade + scale)
-    var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { visible = true }
-
-    // Subtle breathing pulse
-    val infinite = rememberInfiniteTransition(label = "pulse")
-    val pulse by infinite.animateFloat(
-        initialValue = 0.96f,
-        targetValue = 1.04f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulseValue"
-    )
-
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(animationSpec = tween(600)),
-        exit = fadeOut()
-    ) {
-        Box(
-            modifier = Modifier.size(170.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            // Round logo container
-            Box(
-                modifier = Modifier
-                    .size(150.dp)
-                    .graphicsLayer(scaleX = pulse, scaleY = pulse)
-                    .clip(CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                // Image much larger than container to fill circle completely
-                // Need ~1.42x (sqrt(2)) to cover corners of a square inscribed in circle
-                Image(
-                    painter = androidx.compose.ui.res.painterResource(com.zoka.zkapriv.ui.R.drawable.zkapriv_logo),
-                    contentDescription = "Zoka Logo",
-                    modifier = Modifier.size(160.dp),
-                    contentScale = ContentScale.Fit
-                )
-            }
-        }
     }
 }
