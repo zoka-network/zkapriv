@@ -371,6 +371,12 @@ class ZokaRepository @Inject constructor(
         val allInputNullifiers = mutableSetOf<String>()
         data class OwnedOutput(val amountAtoms: Long, val nullifierHex: String)
         val ownedOutputs = mutableListOf<OwnedOutput>()
+        // Per-tx data to classify each tx as outgoing (we spent a note of ours)
+        // vs incoming (we only received), so Recent Activity can show our sends
+        // after a restore — when there is no local sent history to rely on.
+        val ownedByNullifier = mutableMapOf<String, Long>()
+        val txInputNullifiers = mutableMapOf<String, List<String>>()
+        val ourOutputsByTx = mutableMapOf<String, Long>()
         // Outputs of OURS, tagged with the tx that paid them. Used after the
         // scan to surface incoming payments in Recent Activity. A candidate is
         // only a real "received" if the paying tx wasn't sent by us (otherwise
@@ -396,6 +402,10 @@ class ZokaRepository @Inject constructor(
             if (privateTx.nullifier.isNotBlank()) {
                 allInputNullifiers.add(privateTx.nullifier)
             }
+            txInputNullifiers[txHash] = buildList {
+                addAll(privateTx.inputNullifiers)
+                if (privateTx.nullifier.isNotBlank()) add(privateTx.nullifier)
+            }
             for (output in privateTx.outputs) {
                 val amount = checkAndDecryptOutput(
                     output = output,
@@ -406,6 +416,8 @@ class ZokaRepository @Inject constructor(
                 if (output.outputId.isBlank() || output.commitment.isBlank()) continue
                 val nullifierHex = deriveNullifierHex(spendKeyRaw, output.outputId, output.commitment)
                 ownedOutputs.add(OwnedOutput(amount, nullifierHex))
+                ownedByNullifier[nullifierHex] = amount
+                ourOutputsByTx[txHash] = (ourOutputsByTx[txHash] ?: 0L) + amount
                 receivedByTx.add(txHash to amount)
             }
         }
@@ -435,8 +447,26 @@ class ZokaRepository @Inject constructor(
             }
         }
 
-        // Surface received payments in Recent Activity (skips our own change).
-        recordIncomingTransactions(address, receivedByTx)
+        // Classify each private tx: a tx that spent one of our notes is an
+        // outgoing send (amount = spent inputs − our change); a tx where we only
+        // have outputs is an incoming receipt. This lets Recent Activity show
+        // BOTH sends and receipts after a restore, with no local history.
+        val sentByTx = mutableMapOf<String, Long>()
+        val trueReceivedByTx = mutableListOf<Pair<String, Long>>()
+        for (txHash in allPrivateTxHashes) {
+            val spentByUs = (txInputNullifiers[txHash] ?: emptyList())
+                .sumOf { ownedByNullifier[it] ?: 0L }
+            val ourOut = ourOutputsByTx[txHash] ?: 0L
+            if (spentByUs > 0L) {
+                val sent = (spentByUs - ourOut).coerceAtLeast(0L)
+                if (sent > 0L) sentByTx[txHash] = sent
+            } else if (ourOut > 0L) {
+                trueReceivedByTx.add(txHash to ourOut)
+            }
+        }
+        // Surface received payments (skips our own change) AND our own sends.
+        recordIncomingTransactions(address, trueReceivedByTx)
+        recordOutgoingTransactions(address, sentByTx)
 
         Log.d("ZokaRepository", "scanFullBalance: coinbases=${myCoinbases.size} privateTxs=${allPrivateTxHashes.size} ownedOutputs=${ownedOutputs.size} missingTxs=$missingTxCount mature=$matureAtoms immature=$immatureAtoms")
         return BalanceInfo(
@@ -1132,6 +1162,37 @@ class ZokaRepository @Inject constructor(
         }
         if (newIncoming.isEmpty()) return
         val merged = (newIncoming + existing)
+            .sortedByDescending { it.timestamp }
+            .take(MAX_CACHED_TRANSACTIONS)
+        saveTransactionsToPrefs(address, merged)
+    }
+
+    /**
+     * Persist our own sends so they show in Recent Activity after a restore.
+     * A fresh restore has no local sent history, so sends are reconstructed from
+     * the chain: a tx is ours/outgoing when it spent one of our notes. The sent
+     * amount is (spent inputs − our change). The recipient is unknown by design,
+     * so `to` is blank; `from = address` marks the entry as Sent in the UI.
+     */
+    private fun recordOutgoingTransactions(address: String, sentByTx: Map<String, Long>) {
+        if (sentByTx.isEmpty()) return
+        val existing = loadTransactionsFromPrefs(address)
+        val knownHashes = existing.map { it.hash }.toHashSet()
+        val newOutgoing = sentByTx.mapNotNull { (txHash, atoms) ->
+            if (txHash in knownHashes) return@mapNotNull null
+            Transaction(
+                hash = txHash,
+                from = address,
+                to = "",
+                amount = formatAtoms(atoms),
+                token = Token(address = "", symbol = "ZKA", decimals = 9, name = "Zoka"),
+                timestamp = System.currentTimeMillis(),
+                status = TransactionStatus.CONFIRMED,
+                fee = "0"
+            )
+        }
+        if (newOutgoing.isEmpty()) return
+        val merged = (newOutgoing + existing)
             .sortedByDescending { it.timestamp }
             .take(MAX_CACHED_TRANSACTIONS)
         saveTransactionsToPrefs(address, merged)
