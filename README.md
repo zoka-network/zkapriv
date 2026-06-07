@@ -1,72 +1,72 @@
-# ZKAPriv — Wallet privada para la red Zoka
+# ZKAPriv - Private Wallet for the Zoka Network
 
-![Version](https://img.shields.io/badge/version-1.5.0-2ea043.svg)
+![Version](https://img.shields.io/badge/version-1.0.0-2ea043.svg)
 ![Platform](https://img.shields.io/badge/platform-Android-3ddc84.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 ![ZKAPriv v1.0.0 screenshots](docs/screenshots/zkapriv-v1.0.0-screenshots-collage.png)
 
-**ZKAPriv** es la billetera móvil oficial de la **red Zoka (ZKA)**, una cadena
-de pagos con privacidad por defecto. Cada transferencia usa direcciones
-sigilosas (*stealth addresses*) y montos cifrados, de modo que el saldo y el
-historial de una cuenta solo son visibles para quien posee sus claves.
+**ZKAPriv** is the official mobile wallet for the **Zoka Network (ZKA)**, a
+blockchain built around private-by-default payments. Each transfer uses stealth
+addresses and encrypted amounts, so an account balance and history are visible
+only to whoever controls the wallet keys.
 
-> ZKAPriv no es un fork de propósito general: está construida específicamente
-> para el protocolo privado de Zoka (Ristretto255 + notas cifradas + nullifiers).
-
----
-
-## Características
-
-- **Privacidad real por transacción.** Direcciones de un solo uso derivadas por
-  ECDH sobre Ristretto255; los montos viajan cifrados y solo el receptor los
-  puede descifrar con su *scan key*.
-- **Modelo de dos claves.** Cada cuenta tiene una **scan key** (detectar fondos
-  entrantes) y una **spend key** (gastarlos), derivadas de una frase mnemónica
-  BIP39.
-- **Multicuenta.** Varias cuentas independientes en un mismo dispositivo, cada
-  una con su color, nombre y dirección `zka1…`.
-- **Escaneo de saldo on-chain.** La app reconstruye el saldo recorriendo la
-  cadena y descifrando las salidas que le pertenecen, sin depender de un
-  servidor que conozca tu identidad.
-- **Seguridad del dispositivo.** Bloqueo por PIN y biometría, almacenamiento
-  cifrado de claves y bloqueo automático de sesión.
-- **Conexión directa a nodos Zoka.** RPC configurable con nodo primario y
-  *fallback* de respaldo.
+> ZKAPriv is not a general-purpose fork. It is built specifically for Zoka's
+> private payment protocol: Ristretto255, encrypted notes, and nullifiers.
 
 ---
 
-## Arquitectura
+## Features
 
-ZKAPriv es un proyecto Android multi-módulo (Kotlin + Jetpack Compose):
-
-| Módulo | Responsabilidad |
-|--------|-----------------|
-| `app` | Punto de entrada, navegación, tema e inyección de dependencias (Hilt). |
-| `core`    | Modelos compartidos, utilidades y criptografía base (`Ristretto255`, `Bech32`). |
-| `network` | Cliente RPC del nodo Zoka, repositorio de saldos y transacciones privadas. |
-| `security` | Gestión de cuentas, derivación de claves, mnemónicos, keystore y biometría. |
-| `price` | Cotización y estadísticas de mercado de ZKA. |
-| `ui` | Pantallas de Compose: dashboard, enviar/recibir, cuentas, ajustes, etc. |
-
-### Criptografía (resumen)
-
-- Curva: **Ristretto255**.
-- Dirección de pago interna: `zpriv:<scan_pub_hex>:<spend_pub_hex>`.
-- Dirección de usuario: `zka1` + Base58(`scan_pub‖spend_pub‖checksum`).
-- Derivación de salida: `derived = H("zoka-output-key" ‖ shared ‖ commitment)`,
-  `one_time_pubkey = spend_pub + derived·G`.
-- Detección de propiedad: el receptor recomputa la clave de un solo uso con su
-  *scan scalar* y la compara con la salida en cadena.
-- Gasto: cada nota produce un **nullifier** determinista que evita el doble
-  gasto sin revelar qué salida se gastó.
+- **Per-transaction privacy.** One-time addresses are derived with ECDH over
+  Ristretto255; amounts are encrypted and can only be decrypted by the receiver
+  with their scan key.
+- **Two-key account model.** Each account has a **scan key** for detecting
+  incoming funds and a **spend key** for spending them, both derived from a
+  BIP39 mnemonic.
+- **Multi-account wallet.** Manage multiple independent accounts on one device,
+  each with its own name, color, and `zka1...` receive address.
+- **On-chain balance scanning.** The app reconstructs balances by scanning the
+  chain and decrypting outputs that belong to the wallet, without relying on a
+  server that knows the user's identity.
+- **Device-level security.** PIN lock, biometric unlock, encrypted key storage,
+  automatic session locking, and screenshot protection.
+- **Direct Zoka node connectivity.** Configurable RPC endpoints with primary
+  and fallback nodes.
 
 ---
 
-## Compilación
+## Architecture
 
-Requisitos: Android Studio (AGP 8.x), JDK 17, Android SDK con NDK (la app
-incluye criptografía nativa para ARMv7 y ARM64).
+ZKAPriv is a multi-module Android project built with Kotlin and Jetpack Compose:
+
+| Module | Responsibility |
+|--------|----------------|
+| `app` | App entry point, navigation, theme, and dependency injection with Hilt. |
+| `core` | Shared models, utilities, and base cryptography (`Ristretto255`, `Bech32`). |
+| `network` | Zoka node RPC client, balance repository, and private transaction handling. |
+| `security` | Account management, key derivation, mnemonics, Android keystore, and biometrics. |
+| `price` | ZKA market price and statistics. |
+| `ui` | Compose screens: dashboard, send, receive, accounts, settings, and onboarding. |
+
+### Cryptography Overview
+
+- Curve: **Ristretto255**.
+- Internal payment address: `zpriv:<scan_pub_hex>:<spend_pub_hex>`.
+- User receive address: `zka1` + Base58(`scan_pub || spend_pub || checksum`).
+- Output derivation: `derived = H("zoka-output-key" || shared || commitment)`,
+  `one_time_pubkey = spend_pub + derived*G`.
+- Ownership detection: the receiver recomputes the one-time public key with
+  their scan scalar and compares it with the on-chain output.
+- Spending: each note produces a deterministic **nullifier** that prevents
+  double spends without revealing which output was spent.
+
+---
+
+## Build
+
+Requirements: Android Studio with AGP 8.x, JDK 17, and Android SDK/NDK. The app
+includes native cryptography for ARMv7 and ARM64.
 
 ```bash
 # Debug
@@ -75,44 +75,45 @@ incluye criptografía nativa para ARMv7 y ARM64).
 # Release
 ./gradlew assembleRelease
 
-# Instalar en un dispositivo conectado (sin borrar datos)
+# Install on a connected device without clearing app data
 adb install -r app/build/outputs/apk/release/app-release.apk
 ```
 
-El APK de release queda en `app/build/outputs/apk/release/`.
+The release APK is generated at `app/build/outputs/apk/release/`.
 
 ---
 
-## Configuración de red
+## Network Configuration
 
-Los endpoints RPC del nodo Zoka se definen en el módulo `core`
-(`Constants.kt`) y pueden ajustarse desde **Ajustes → Red** dentro de la app:
+Zoka node RPC endpoints are defined in the `core` module (`Constants.kt`) and
+can also be adjusted inside the app from **Settings -> Network**:
 
-- **RPC primario** y **RPC de respaldo** (*fallback*) para tolerar caídas.
-
----
-
-## Seguridad
-
-- Las claves (mnemónico, scan/spend) **nunca salen del dispositivo** sin acción
-  explícita del usuario y se guardan cifradas.
-- No subas al repositorio: `keystore.properties`, `local.properties`, claves de
-  firma, ni ningún archivo con seeds o tokens.
-- Guarda tu frase de recuperación fuera de línea: es la única forma de
-  restaurar una cuenta.
+- **Primary RPC** and **fallback RPC** for node availability.
 
 ---
 
-## Estado
+## Security
 
-En desarrollo activo, conectada a la red Zoka. Las funciones de privacidad
-están operativas; el roadmap del protocolo se mantiene en el repositorio del
-nodo Zoka.
+- Wallet secrets, including mnemonics, scan keys, and spend keys, **never leave
+  the device** unless the user explicitly exports them. They are stored
+  encrypted at rest.
+- Do not commit `keystore.properties`, `local.properties`, signing keys, seeds,
+  tokens, APKs, or any file containing wallet secrets.
+- Store the recovery phrase offline. It is the only way to restore a full wallet
+  account.
 
 ---
 
-## Licencia
+## Status
 
-Distribuido bajo licencia **MIT**. Ver el archivo [LICENSE](LICENSE).
+ZKAPriv is actively maintained and connected to the Zoka Network mainnet. Its
+privacy features are operational; protocol-level roadmap items are tracked in
+the Zoka node repository.
 
-© 2025 Zoka Network.
+---
+
+## License
+
+Distributed under the **MIT** license.
+
+Copyright (c) 2025 Zoka Network.
