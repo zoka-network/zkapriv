@@ -334,6 +334,9 @@ class ZokaRepository @Inject constructor(
         )
         val myCoinbases = mutableListOf<CoinbaseEntry>()
         val allPrivateTxHashes = linkedSetOf<String>()
+        // Real on-chain time (ms) of each private tx, taken from its block header,
+        // so Recent Activity shows when the tx happened — not when we scanned.
+        val txTimestampByHash = mutableMapOf<String, Long>()
 
         // Phase 1: Scan blocks for our coinbase outputs and private tx hashes.
         // A freshly-created wallet records its creation height as restoreHeight,
@@ -358,6 +361,12 @@ class ZokaRepository @Inject constructor(
                     ))
                 }
                 allPrivateTxHashes.addAll(block.privateTxHashes)
+                // Record the block's real timestamp (header is seconds → ms) for
+                // each private tx it commits, for Recent Activity.
+                val blockTsMs = (block.header?.timestamp ?: 0L) * 1000L
+                if (blockTsMs > 0L) {
+                    block.privateTxHashes.forEach { h -> txTimestampByHash[h] = blockTsMs }
+                }
                 // Whatever hash we saw committed in a block is "confirmed"
                 // from the reconciliation point of view: it's no longer
                 // in flight. Used by withReconciledPendings() to clear
@@ -468,8 +477,8 @@ class ZokaRepository @Inject constructor(
             }
         }
         // Surface received payments (skips our own change) AND our own sends.
-        recordIncomingTransactions(address, trueReceivedByTx)
-        recordOutgoingTransactions(address, sentByTx)
+        recordIncomingTransactions(address, trueReceivedByTx, txTimestampByHash)
+        recordOutgoingTransactions(address, sentByTx, txTimestampByHash)
 
         Log.d("ZokaRepository", "scanFullBalance: coinbases=${myCoinbases.size} privateTxs=${allPrivateTxHashes.size} ownedOutputs=${ownedOutputs.size} missingTxs=$missingTxCount mature=$matureAtoms immature=$immatureAtoms")
         return BalanceInfo(
@@ -1139,7 +1148,11 @@ class ZokaRepository @Inject constructor(
      * left blank and the UI renders it as "Received". Entries are CONFIRMED
      * because we only see them once their tx is committed in a scanned block.
      */
-    private fun recordIncomingTransactions(address: String, received: List<Pair<String, Long>>) {
+    private fun recordIncomingTransactions(
+        address: String,
+        received: List<Pair<String, Long>>,
+        timestamps: Map<String, Long>
+    ) {
         if (received.isEmpty()) return
         val existing = loadTransactionsFromPrefs(address)
         val knownHashes = existing.map { it.hash }.toHashSet()
@@ -1158,7 +1171,7 @@ class ZokaRepository @Inject constructor(
                 to = address,
                 amount = formatAtoms(atoms),
                 token = Token(address = "", symbol = "ZKA", decimals = 9, name = "Zoka"),
-                timestamp = System.currentTimeMillis(),
+                timestamp = timestamps[txHash] ?: System.currentTimeMillis(),
                 status = TransactionStatus.CONFIRMED,
                 fee = "0"
             )
@@ -1177,7 +1190,11 @@ class ZokaRepository @Inject constructor(
      * amount is (spent inputs − our change). The recipient is unknown by design,
      * so `to` is blank; `from = address` marks the entry as Sent in the UI.
      */
-    private fun recordOutgoingTransactions(address: String, sentByTx: Map<String, Long>) {
+    private fun recordOutgoingTransactions(
+        address: String,
+        sentByTx: Map<String, Long>,
+        timestamps: Map<String, Long>
+    ) {
         if (sentByTx.isEmpty()) return
         val existing = loadTransactionsFromPrefs(address)
         val knownHashes = existing.map { it.hash }.toHashSet()
@@ -1189,7 +1206,7 @@ class ZokaRepository @Inject constructor(
                 to = "",
                 amount = formatAtoms(atoms),
                 token = Token(address = "", symbol = "ZKA", decimals = 9, name = "Zoka"),
-                timestamp = System.currentTimeMillis(),
+                timestamp = timestamps[txHash] ?: System.currentTimeMillis(),
                 status = TransactionStatus.CONFIRMED,
                 fee = "0"
             )

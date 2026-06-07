@@ -123,7 +123,9 @@ data class ZokaRawBlockHeader(
     @SerializedName("block_height")
     val blockHeight: Long = 0,
     @SerializedName("hash")
-    val hash: String = ""
+    val hash: String = "",
+    @SerializedName("timestamp")
+    val timestamp: Long? = null
 )
 
 data class ZokaRawPrivateCoinbase(
