@@ -34,7 +34,7 @@ class RpcEndpointInterceptor @Inject constructor(
         val fallback = Constants.ZOKA_MAINNET_RPC_FALLBACK.toHttpUrlOrNull()
         val preferred = selectFreshestEndpoint(primary, fallback)
 
-        return try {
+        val response = try {
             chain.proceed(rewriteRequest(original, preferred))
         } catch (e: IOException) {
             val alternate = alternateEndpoint(primary, fallback, preferred) ?: throw e
@@ -42,8 +42,28 @@ class RpcEndpointInterceptor @Inject constructor(
                 "RpcInterceptor",
                 "RPC unreachable (${preferred.host}), switching to alternate (${alternate.host})"
             )
-            chain.proceed(rewriteRequest(original, alternate))
+            return chain.proceed(rewriteRequest(original, alternate))
         }
+
+        // A node can be missing a committed private-tx body (replication lag) and
+        // return 404 even though the tx exists on-chain. Retry the body lookup
+        // once on the alternate node so one node's missing body can't hide a
+        // spend or output from the wallet (which would mis-state the balance).
+        if (response.code == HttpURLConnection.HTTP_NOT_FOUND &&
+            original.method == "GET" &&
+            original.url.encodedPath.contains("/private/tx/")
+        ) {
+            val alternate = alternateEndpoint(primary, fallback, preferred)
+            if (alternate != null) {
+                response.close()
+                Log.w(
+                    "RpcInterceptor",
+                    "404 on ${preferred.host} for ${original.url.encodedPath}; retrying on ${alternate.host}"
+                )
+                return chain.proceed(rewriteRequest(original, alternate))
+            }
+        }
+        return response
     }
 
     private fun selectFreshestEndpoint(primary: HttpUrl, fallback: HttpUrl?): HttpUrl {

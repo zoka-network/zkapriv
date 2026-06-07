@@ -337,6 +337,15 @@ class ZokaRepository @Inject constructor(
         // Real on-chain time (ms) of each private tx, taken from its block header,
         // so Recent Activity shows when the tx happened — not when we scanned.
         val txTimestampByHash = mutableMapOf<String, Long>()
+        // Spent nullifiers, taken from each block's committed `private_nullifiers`
+        // field during the block scan. This is the authoritative, fetch-independent
+        // source of spends: a note can never show as spendable just because a
+        // per-tx body fetch was rate-limited or missed.
+        val allInputNullifiers = mutableSetOf<String>()
+        // Every full scan re-attempts any body a prior scan couldn't fetch: these
+        // hashes are committed on-chain, so a 404 is transient (a node's missing
+        // body / replication lag), never permanent.
+        missingPrivateTxCache.clear()
 
         // Phase 1: Scan blocks for our coinbase outputs and private tx hashes.
         // A freshly-created wallet records its creation height as restoreHeight,
@@ -361,6 +370,8 @@ class ZokaRepository @Inject constructor(
                     ))
                 }
                 allPrivateTxHashes.addAll(block.privateTxHashes)
+                // Authoritative spent set: the nullifiers committed in this block.
+                allInputNullifiers.addAll(block.privateNullifiers)
                 // Record the block's real timestamp (header is seconds → ms) for
                 // each private tx it commits, for Recent Activity.
                 val blockTsMs = (block.header?.timestamp ?: 0L) * 1000L
@@ -376,8 +387,9 @@ class ZokaRepository @Inject constructor(
             from = to + 1
         }
 
-        // Phase 2: Fetch all private txs — collect all spent nullifiers and owned outputs
-        val allInputNullifiers = mutableSetOf<String>()
+        // Phase 2: Fetch all private txs — collect owned outputs (and, as a
+        // supplement to the block-committed set above, any spend nullifiers from
+        // the tx bodies we do fetch).
         data class OwnedOutput(val amountAtoms: Long, val nullifierHex: String)
         val ownedOutputs = mutableListOf<OwnedOutput>()
         // Per-tx data to classify each tx as outgoing (we spent a note of ours)

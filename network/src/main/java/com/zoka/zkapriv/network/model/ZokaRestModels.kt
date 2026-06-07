@@ -116,7 +116,9 @@ data class ZokaRawBlockResponse(
     @SerializedName("transactions")
     val transactions: List<ZokaRawTransaction> = emptyList(),
     @SerializedName("private_tx_hashes")
-    val privateTxHashes: List<String> = emptyList()
+    val privateTxHashes: List<String> = emptyList(),
+    @SerializedName("private_nullifiers")
+    val privateNullifiers: List<String> = emptyList()
 )
 
 data class ZokaRawBlockHeader(
