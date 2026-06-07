@@ -375,7 +375,10 @@ class ZokaRepository @Inject constructor(
         // vs incoming (we only received), so Recent Activity can show our sends
         // after a restore — when there is no local sent history to rely on.
         val ownedByNullifier = mutableMapOf<String, Long>()
-        val txInputNullifiers = mutableMapOf<String, List<String>>()
+        // Deduped per-tx: a private tx carries its spend nullifier both in the
+        // `nullifier` field and in `input_nullifiers`, so a Set avoids counting
+        // the same spent note twice.
+        val txInputNullifiers = mutableMapOf<String, Set<String>>()
         val ourOutputsByTx = mutableMapOf<String, Long>()
         // Outputs of OURS, tagged with the tx that paid them. Used after the
         // scan to surface incoming payments in Recent Activity. A candidate is
@@ -402,7 +405,7 @@ class ZokaRepository @Inject constructor(
             if (privateTx.nullifier.isNotBlank()) {
                 allInputNullifiers.add(privateTx.nullifier)
             }
-            txInputNullifiers[txHash] = buildList {
+            txInputNullifiers[txHash] = buildSet {
                 addAll(privateTx.inputNullifiers)
                 if (privateTx.nullifier.isNotBlank()) add(privateTx.nullifier)
             }
@@ -454,7 +457,7 @@ class ZokaRepository @Inject constructor(
         val sentByTx = mutableMapOf<String, Long>()
         val trueReceivedByTx = mutableListOf<Pair<String, Long>>()
         for (txHash in allPrivateTxHashes) {
-            val spentByUs = (txInputNullifiers[txHash] ?: emptyList())
+            val spentByUs = (txInputNullifiers[txHash] ?: emptySet())
                 .sumOf { ownedByNullifier[it] ?: 0L }
             val ourOut = ourOutputsByTx[txHash] ?: 0L
             if (spentByUs > 0L) {
