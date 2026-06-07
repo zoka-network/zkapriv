@@ -575,7 +575,7 @@ fun SettingsScreen(
                                             color = Color.White.copy(alpha = 0.15f)
                                         ) {
                                             Text(
-                                                text = "v0.1.0",
+                                                text = "v1.0.0",
                                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                                                 style = MaterialTheme.typography.labelLarge,
                                                 color = Color.White

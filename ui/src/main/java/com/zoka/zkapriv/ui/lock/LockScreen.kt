@@ -140,7 +140,7 @@ fun LockScreen(
 
         // Version label, top-right.
         Text(
-            text = "v0.1.0",
+            text = "v1.0.0",
             fontSize = 12.sp,
             color = if (isDarkTheme) textSecondary else Color.White.copy(alpha = 0.7f),
             fontWeight = FontWeight.Medium,
