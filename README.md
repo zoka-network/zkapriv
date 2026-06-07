@@ -4,6 +4,8 @@
 ![Platform](https://img.shields.io/badge/platform-Android-3ddc84.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
+![ZKAPriv v1.0.0 screenshots](docs/screenshots/zkapriv-v1.0.0-screenshots-collage.png)
+
 **ZKAPriv** es la billetera móvil oficial de la **red Zoka (ZKA)**, una cadena
 de pagos con privacidad por defecto. Cada transferencia usa direcciones
 sigilosas (*stealth addresses*) y montos cifrados, de modo que el saldo y el
