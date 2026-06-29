@@ -5,7 +5,7 @@ object Constants {
     const val ZOKA_MAINNET_RPC         = "http://159.223.119.216:3000/"
     const val ZOKA_MAINNET_RPC_FALLBACK = "http://157.230.5.103:3000/"
     const val COINGECKO_API = "https://api.coingecko.com/api/v3/"
-    const val ZOKA_CHAIN_ID = "zoka-mainnet-v1"
+    const val ZOKA_CHAIN_ID = "zoka-mainnet-zenith-v1"
 
     // Token economics (economics.testnet.v1.json / mainnet)
     const val ATOMS_PER_ZKA = 1_000_000L          // 1 ZKA = 1,000,000 atoms (decimals = 6)
