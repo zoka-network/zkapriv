@@ -76,15 +76,27 @@ class DashboardViewModel @Inject constructor(
                 }
             }
         }
-        // Auto-refresh balance every 30 seconds; invalidate cache so each
-        // cycle does a real RPC scan, not a stale in-memory hit.
+        // Auto-refresh every 30 seconds, but only re-scan (expensive: walks
+        // every private tx on chain) when a new block has actually landed.
+        // The target block time is ~120s, so most 30s ticks see no new
+        // block — invalidating unconditionally here used to retrigger a
+        // 1-2 minute full scan every cycle, which never let the cache stay
+        // fresh long enough for Send/Home to get a fast hit.
         viewModelScope.launch {
             while (true) {
                 delay(AUTO_REFRESH_INTERVAL_MS)
                 val address = accountManager.activeAccount.value?.address
                     ?: secureStorage.getActiveWallet()
                 address?.let {
-                    zokaRepository.invalidateBalanceCacheFor(it)
+                    val chainHeight = zokaRepository.getChainHeightCheap()
+                    val scannedHeight = zokaRepository.cachedBalanceFor(it)?.scannedHeight ?: 0L
+                    // Only blow away the balance cache (forcing the expensive
+                    // full re-scan) when a new block actually landed. Price
+                    // and transaction-history refresh keep running every tick
+                    // either way.
+                    if (chainHeight != null && chainHeight > scannedHeight) {
+                        zokaRepository.invalidateBalanceCacheFor(it)
+                    }
                     loadWalletData(it, force = true)
                 }
             }

@@ -16,7 +16,12 @@ import com.zoka.zkapriv.network.model.ZokaTransactionRequest
 import com.zoka.zkapriv.network.nativebridge.LocalProverClient
 import com.zoka.zkapriv.security.storage.SecureStorage
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import com.zoka.zkapriv.core.util.Ristretto255
@@ -58,9 +63,11 @@ class ZokaRepository @Inject constructor(
     // Balance cache: prevents multiple ViewModels from scanning simultaneously
     private val balanceCache = mutableMapOf<String, Pair<BalanceInfo, Long>>()
     private val scanMutex = Mutex()
-    // Private tx cache: immutable on-chain data, safe to cache for the app session
-    private val privateTxCache = mutableMapOf<String, ZokaPrivateTransactionResponse>()
-    private val missingPrivateTxCache = mutableSetOf<String>()
+    // Private tx cache: immutable on-chain data, safe to cache for the app session.
+    // ConcurrentHashMap-backed because batched parallel fetches in scanFullBalance
+    // write to these from multiple coroutines at once.
+    private val privateTxCache = java.util.concurrent.ConcurrentHashMap<String, ZokaPrivateTransactionResponse>()
+    private val missingPrivateTxCache = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     companion object {
         private const val PREF_KEY_PREFIX = "transactions_"
@@ -80,6 +87,22 @@ class ZokaRepository @Inject constructor(
         private const val PRIVATE_TX_PHASE_DELAY_MS = 2_000L
         private const val PRIVATE_TX_DELAY_MS = 350L
         private val PRIVATE_TX_RETRY_DELAYS_MS = longArrayOf(8_000L, 20_000L)
+        // Concurrent tx-body fetches per batch during a full balance scan.
+        // Mirrors the batch size the web explorer already uses against the
+        // same node (src/lib/api.ts, scanPrivateKey) without tripping its
+        // rate limiter.
+        private const val PRIVATE_TX_FETCH_BATCH_SIZE = 6
+        private const val PRIVATE_TX_BATCH_DELAY_MS = 150L
+        // The shared OkHttp client's read timeout (120s) is sized for
+        // server-side proof generation on a different endpoint. A single tx
+        // body fetch should never legitimately take that long, so cap it
+        // independently — a stuck request must not block a whole batch.
+        private const val PRIVATE_TX_FETCH_TIMEOUT_MS = 10_000L
+        // Same reasoning as PRIVATE_TX_FETCH_TIMEOUT_MS, sized up for a
+        // multi-block payload: a stalled raw-block-range fetch must not eat
+        // the shared client's 120s read timeout while scanning hundreds of
+        // blocks sequentially.
+        private const val RAW_BLOCK_RANGE_TIMEOUT_MS = 20_000L
     }
 
     data class BalanceInfo(
@@ -264,6 +287,19 @@ class ZokaRepository @Inject constructor(
      */
     private val confirmedPrivateTxHashes = mutableSetOf<String>()
 
+    /**
+     * Cheap chain-height check (no block/tx fetching) — used to decide
+     * whether a periodic balance refresh actually needs to re-scan, instead
+     * of blindly invalidating the cache on every tick.
+     */
+    suspend fun getChainHeightCheap(): Long? = try {
+        zokaNodeApi.getChainHeight().height
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
+
     fun cachedBalanceFor(address: String): BalanceInfo? {
         val saved = rpcSettings.readBalanceCache(address) ?: return null
         return BalanceInfo(
@@ -285,13 +321,16 @@ class ZokaRepository @Inject constructor(
         missingPrivateTxCache.clear()
     }
 
+    private suspend fun fetchRawBlocksRange(from: Long, to: Long) =
+        withTimeout(RAW_BLOCK_RANGE_TIMEOUT_MS) { zokaNodeApi.getRawBlocksRange(from, to) }
+
     private suspend fun scanCoinbaseBalance(address: String, chainHeight: Long): BalanceInfo {
         var matureAtoms = 0L
         var immatureAtoms = 0L
         var from = 1L
         while (from <= chainHeight) {
             val to = minOf(from + RAW_BLOCK_SCAN_BATCH_SIZE - 1, chainHeight)
-            val response = zokaNodeApi.getRawBlocksRange(from, to)
+            val response = fetchRawBlocksRange(from, to)
             delay(BATCH_DELAY_MS)
             response.blocks.forEach { block ->
                 // Coinbase tx is always at index 0 with sender == COINBASE_SENDER
@@ -321,6 +360,8 @@ class ZokaRepository @Inject constructor(
         chainHeight: Long,
         restoreHeight: Long = 0
     ): BalanceInfo {
+        val scanStartedAtMs = System.currentTimeMillis()
+        Log.d("ZokaRepository", "scanFullBalance: START chainHeight=$chainHeight restoreHeight=$restoreHeight")
         // Derive scan scalar: SHA256(scanKey) as LE mod L
         val scanScalar = Ristretto255.scalarFromSecretBytes(scanKeyBytes)
         // Derive spend key: SHA256("zoka-private-wallet-spend-v1" || 0x1f || scanKey)
@@ -355,7 +396,7 @@ class ZokaRepository @Inject constructor(
         var from = restoreHeight.coerceAtLeast(1L)
         while (from <= chainHeight) {
             val to = minOf(from + RAW_BLOCK_SCAN_BATCH_SIZE - 1, chainHeight)
-            val response = zokaNodeApi.getRawBlocksRange(from, to)
+            val response = fetchRawBlocksRange(from, to)
             delay(BATCH_DELAY_MS)
             response.blocks.forEach { block ->
                 val blockHeight = block.header?.blockHeight ?: 0L
@@ -411,38 +452,59 @@ class ZokaRepository @Inject constructor(
             delay(PRIVATE_TX_PHASE_DELAY_MS)
         }
 
+        // Fetch tx bodies in small concurrent batches instead of one at a
+        // time. The sequential version paid a fixed per-tx delay (avoiding
+        // the node's rate limiter) on every single hash — on a chain with
+        // hundreds of private txs that alone added minutes, independent of
+        // device speed. A small batch keeps the same rate-limit courtesy
+        // (and the same 429 retry path) while cutting wall-clock time
+        // roughly batch-size-fold. Decryption/bookkeeping below stays
+        // single-threaded — only the network fetch runs in parallel.
         var missingTxCount = 0
-        for (txHash in allPrivateTxHashes) {
-            val privateTx = getPrivateTransactionCached(txHash)
-            if (privateTx == null) {
-                if (txHash !in missingPrivateTxCache) missingTxCount++
-                continue
+        val hashList = allPrivateTxHashes.toList()
+        for (batchStart in hashList.indices step PRIVATE_TX_FETCH_BATCH_SIZE) {
+            val batch = hashList.subList(
+                batchStart,
+                minOf(batchStart + PRIVATE_TX_FETCH_BATCH_SIZE, hashList.size)
+            )
+            val fetched = coroutineScope {
+                batch.map { txHash -> async { txHash to getPrivateTransactionCached(txHash) } }
+                    .awaitAll()
             }
-            val txNullifierDomain = privateTx.nullifier.ifBlank {
-                privateTx.inputNullifiers.firstOrNull().orEmpty()
-            }
+            for ((txHash, privateTx) in fetched) {
+                if (privateTx == null) {
+                    if (txHash !in missingPrivateTxCache) missingTxCount++
+                    continue
+                }
+                val txNullifierDomain = privateTx.nullifier.ifBlank {
+                    privateTx.inputNullifiers.firstOrNull().orEmpty()
+                }
 
-            allInputNullifiers.addAll(privateTx.inputNullifiers)
-            if (privateTx.nullifier.isNotBlank()) {
-                allInputNullifiers.add(privateTx.nullifier)
+                allInputNullifiers.addAll(privateTx.inputNullifiers)
+                if (privateTx.nullifier.isNotBlank()) {
+                    allInputNullifiers.add(privateTx.nullifier)
+                }
+                txInputNullifiers[txHash] = buildSet {
+                    addAll(privateTx.inputNullifiers)
+                    if (privateTx.nullifier.isNotBlank()) add(privateTx.nullifier)
+                }
+                for (output in privateTx.outputs) {
+                    val amount = checkAndDecryptOutput(
+                        output = output,
+                        scanScalar = scanScalar,
+                        spendScalar = spendScalar,
+                        txNullifierDomain = txNullifierDomain
+                    ) ?: continue
+                    if (output.outputId.isBlank() || output.commitment.isBlank()) continue
+                    val nullifierHex = deriveNullifierHex(spendKeyRaw, output.outputId, output.commitment)
+                    ownedOutputs.add(OwnedOutput(amount, nullifierHex))
+                    ownedByNullifier[nullifierHex] = amount
+                    ourOutputsByTx[txHash] = (ourOutputsByTx[txHash] ?: 0L) + amount
+                    receivedByTx.add(txHash to amount)
+                }
             }
-            txInputNullifiers[txHash] = buildSet {
-                addAll(privateTx.inputNullifiers)
-                if (privateTx.nullifier.isNotBlank()) add(privateTx.nullifier)
-            }
-            for (output in privateTx.outputs) {
-                val amount = checkAndDecryptOutput(
-                    output = output,
-                    scanScalar = scanScalar,
-                    spendScalar = spendScalar,
-                    txNullifierDomain = txNullifierDomain
-                ) ?: continue
-                if (output.outputId.isBlank() || output.commitment.isBlank()) continue
-                val nullifierHex = deriveNullifierHex(spendKeyRaw, output.outputId, output.commitment)
-                ownedOutputs.add(OwnedOutput(amount, nullifierHex))
-                ownedByNullifier[nullifierHex] = amount
-                ourOutputsByTx[txHash] = (ourOutputsByTx[txHash] ?: 0L) + amount
-                receivedByTx.add(txHash to amount)
+            if (batchStart + PRIVATE_TX_FETCH_BATCH_SIZE < hashList.size) {
+                delay(PRIVATE_TX_BATCH_DELAY_MS)
             }
         }
 
@@ -492,7 +554,8 @@ class ZokaRepository @Inject constructor(
         recordIncomingTransactions(address, trueReceivedByTx, txTimestampByHash)
         recordOutgoingTransactions(address, sentByTx, txTimestampByHash)
 
-        Log.d("ZokaRepository", "scanFullBalance: coinbases=${myCoinbases.size} privateTxs=${allPrivateTxHashes.size} ownedOutputs=${ownedOutputs.size} missingTxs=$missingTxCount mature=$matureAtoms immature=$immatureAtoms")
+        val elapsedMs = System.currentTimeMillis() - scanStartedAtMs
+        Log.d("ZokaRepository", "scanFullBalance: DONE in ${elapsedMs}ms coinbases=${myCoinbases.size} privateTxs=${allPrivateTxHashes.size} ownedOutputs=${ownedOutputs.size} missingTxs=$missingTxCount mature=$matureAtoms immature=$immatureAtoms")
         return BalanceInfo(
             matureAtoms = matureAtoms,
             immatureAtoms = immatureAtoms,
@@ -507,7 +570,9 @@ class ZokaRepository @Inject constructor(
 
         delay(PRIVATE_TX_DELAY_MS)
         return try {
-            zokaNodeApi.getPrivateTransaction(txHash).also { privateTxCache[txHash] = it }
+            withTimeout(PRIVATE_TX_FETCH_TIMEOUT_MS) {
+                zokaNodeApi.getPrivateTransaction(txHash)
+            }.also { privateTxCache[txHash] = it }
         } catch (e: HttpException) {
             if (e.code() != 429) {
                 if (e.code() == 404) missingPrivateTxCache.add(txHash)
@@ -515,6 +580,14 @@ class ZokaRepository @Inject constructor(
                 return null
             }
             retryPrivateTransactionAfterRateLimit(txHash)
+        } catch (e: TimeoutCancellationException) {
+            // The shared OkHttp client carries a 120s read timeout sized for
+            // proof generation elsewhere; a single stalled fetch here would
+            // otherwise block this entire concurrent batch for that long.
+            // Treat it like any other transient failure: skip for this scan,
+            // don't permanently mark as missing (only a real 404 does that).
+            Log.w("ZokaRepository", "Timed out fetching $txHash after ${PRIVATE_TX_FETCH_TIMEOUT_MS}ms, skipping")
+            null
         } catch (e: Exception) {
             Log.w("ZokaRepository", "Skipping $txHash: ${e.message}")
             null
@@ -526,13 +599,18 @@ class ZokaRepository @Inject constructor(
             Log.d("ZokaRepository", "429 on $txHash, retrying after ${delayMs}ms")
             delay(delayMs)
             try {
-                return zokaNodeApi.getPrivateTransaction(txHash).also { privateTxCache[txHash] = it }
+                return withTimeout(PRIVATE_TX_FETCH_TIMEOUT_MS) {
+                    zokaNodeApi.getPrivateTransaction(txHash)
+                }.also { privateTxCache[txHash] = it }
             } catch (e: HttpException) {
                 if (e.code() != 429) {
                     if (e.code() == 404) missingPrivateTxCache.add(txHash)
                     Log.w("ZokaRepository", "Skipping $txHash after retry: ${e.message}")
                     return null
                 }
+            } catch (e: TimeoutCancellationException) {
+                Log.w("ZokaRepository", "Timed out retrying $txHash, skipping")
+                return null
             } catch (e: Exception) {
                 Log.w("ZokaRepository", "Skipping $txHash after retry: ${e.message}")
                 return null
@@ -778,9 +856,13 @@ class ZokaRepository @Inject constructor(
                 reservedAtoms = amountAtoms + feeAtoms
             )
 
-            // Local in-memory caches no longer reflect chain state, so
-            // invalidate them and let the next dashboard refresh re-scan.
-            invalidateAllInMemoryCaches()
+            // Deliberately do NOT invalidate the balance cache here. The
+            // pending-send reservation above is enough: the next read applies
+            // it as an overlay (withReconciledPendings) on top of the
+            // existing cached mature balance, so "Available" drops instantly.
+            // Wiping the cache instead forced an immediate full re-scan
+            // (1-2 min, walks every private tx on chain) right when the user
+            // most wants to see the deduction reflected fast.
 
             Result.Success(hash)
         } catch (e: HttpException) {
@@ -1002,7 +1084,7 @@ class ZokaRepository @Inject constructor(
         var from = 1L
         while (from <= height) {
             val to = minOf(from + RAW_BLOCK_SCAN_BATCH_SIZE - 1, height)
-            val response = zokaNodeApi.getRawBlocksRange(from, to)
+            val response = fetchRawBlocksRange(from, to)
             for (block in response.blocks) {
                 confirmedPrivateTxHashes.addAll(block.privateTxHashes)
                 if (hash in block.privateTxHashes) return true
