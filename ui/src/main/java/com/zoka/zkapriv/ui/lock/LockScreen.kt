@@ -51,6 +51,11 @@ fun LockScreen(
     val context = LocalContext.current as FragmentActivity
     var pin by remember { mutableStateOf("") }
     var showPinInput by remember { mutableStateOf(false) }
+    val appVersionLabel = remember {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull()?.let { "v$it" } ?: ""
+    }
 
     // Theme detection based on background luminance
     val backgroundColor = MaterialTheme.colorScheme.background
@@ -140,7 +145,7 @@ fun LockScreen(
 
         // Version label, top-right.
         Text(
-            text = "v1.0.0",
+            text = appVersionLabel,
             fontSize = 12.sp,
             color = if (isDarkTheme) textSecondary else Color.White.copy(alpha = 0.7f),
             fontWeight = FontWeight.Medium,

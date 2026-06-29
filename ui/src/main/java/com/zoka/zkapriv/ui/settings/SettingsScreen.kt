@@ -47,7 +47,12 @@ fun SettingsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
-    
+    val appVersionLabel = remember {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull()?.let { "v$it" } ?: ""
+    }
+
     var showSeedPhraseDialog by remember { mutableStateOf(false) }
     var showScanKeyDialog by remember { mutableStateOf(false) }
     var showChangePinDialog by remember { mutableStateOf(false) }
@@ -575,7 +580,7 @@ fun SettingsScreen(
                                             color = Color.White.copy(alpha = 0.15f)
                                         ) {
                                             Text(
-                                                text = "v1.0.0",
+                                                text = appVersionLabel,
                                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                                                 style = MaterialTheme.typography.labelLarge,
                                                 color = Color.White

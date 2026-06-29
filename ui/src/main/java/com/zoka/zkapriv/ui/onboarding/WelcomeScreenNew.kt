@@ -17,6 +17,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -40,6 +41,12 @@ fun WelcomeScreenNew(
 ) {
     var showTermsDialog by remember { mutableStateOf(false) }
     var acceptedTerms by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val appVersionLabel = remember {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull()?.let { "v$it" } ?: ""
+    }
 
     // Theme detection based on background luminance (same approach as LockScreen).
     val backgroundColor = MaterialTheme.colorScheme.background
@@ -94,7 +101,7 @@ fun WelcomeScreenNew(
 
         // Version label, top-right.
         Text(
-            text = "v1.0.0",
+            text = appVersionLabel,
             fontSize = 12.sp,
             color = if (isDarkTheme) textSecondary else Color.White.copy(alpha = 0.7f),
             fontWeight = FontWeight.Medium,
