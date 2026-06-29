@@ -124,7 +124,7 @@ class RpcSettings @Inject constructor(
         )
     }
 
-    private fun clearAllBalanceCaches() {
+    fun clearAllBalanceCaches() {
         val toRemove = prefs.all.keys.filter { it.startsWith(BALANCE_PREFIX) }
         if (toRemove.isEmpty()) return
         val editor = prefs.edit()

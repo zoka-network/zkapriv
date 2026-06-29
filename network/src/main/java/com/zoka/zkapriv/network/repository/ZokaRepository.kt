@@ -49,6 +49,30 @@ class ZokaRepository @Inject constructor(
     private val gson = Gson()
     private val MAX_CACHED_TRANSACTIONS = 50
 
+    // A genesis reset keeps the same wallet address but starts a new chain
+    // (new chain_id) with no history. Local caches (Recent Activity, balance
+    // snapshots) are keyed by address only, so they'd otherwise keep showing
+    // the previous chain's activity forever. Detect the chain_id change once
+    // per app start and wipe exactly those caches — never the wallet/keys.
+    init {
+        val lastSeenChainId = sharedPreferences.getString(PREF_KEY_NETWORK_EPOCH, null)
+        if (lastSeenChainId != Constants.ZOKA_CHAIN_ID) {
+            val editor = sharedPreferences.edit()
+            sharedPreferences.all.keys
+                .filter { it.startsWith(PREF_KEY_PREFIX) }
+                .forEach { editor.remove(it) }
+            editor.putString(PREF_KEY_NETWORK_EPOCH, Constants.ZOKA_CHAIN_ID)
+            editor.apply()
+            rpcSettings.clearAllBalanceCaches()
+            if (lastSeenChainId != null) {
+                Log.i(
+                    "ZokaRepository",
+                    "Network chain_id changed ($lastSeenChainId -> ${Constants.ZOKA_CHAIN_ID}); cleared local activity/balance caches"
+                )
+            }
+        }
+    }
+
     // On-device private transaction builder (Rust JNI engine). Staging builds
     // select it explicitly; release stays remote until coordinated rollout.
     private val localTransferBuilder by lazy {
@@ -71,6 +95,7 @@ class ZokaRepository @Inject constructor(
 
     companion object {
         private const val PREF_KEY_PREFIX = "transactions_"
+        private const val PREF_KEY_NETWORK_EPOCH = "network_chain_id_epoch"
         private const val ATOMS_PER_ZKA = 1_000_000L
         private const val RAW_BLOCK_SCAN_BATCH_SIZE = 250L
         const val COINBASE_SENDER = "zoka:coinbase:v1"
