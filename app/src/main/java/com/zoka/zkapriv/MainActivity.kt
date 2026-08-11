@@ -74,6 +74,22 @@ class MainActivity : FragmentActivity() {
             android.view.WindowManager.LayoutParams.FLAG_SECURE
         )
 
+        // Sonda del puente de red nativo.
+        //
+        // Temporal, para la puesta en marcha del cliente P2P: confirma en el
+        // log que la biblioteca carga y que los simbolos JNI resuelven en el
+        // dispositivo real. Sin esto, que la app arranque no dice nada sobre el
+        // puente -- la biblioteca se carga perezosamente y nadie la tocaba.
+        //
+        // No conecta a la red ni gasta bateria: `status()` solo lee estado.
+        // Quitar cuando la wallet use la red de verdad.
+        try {
+            val estado = com.zoka.zkapriv.network.nativebridge.ZokaNativeNetwork.status()
+            android.util.Log.i("ZokaNetProbe", "puente de red OK: " + estado)
+        } catch (t: Throwable) {
+            android.util.Log.e("ZokaNetProbe", "puente de red FALLO: " + t.message, t)
+        }
+
         // Enable edge-to-edge display
         enableEdgeToEdge()
         
