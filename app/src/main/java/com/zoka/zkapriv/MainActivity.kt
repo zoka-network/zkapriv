@@ -83,12 +83,6 @@ class MainActivity : FragmentActivity() {
         //
         // No conecta a la red ni gasta bateria: `status()` solo lee estado.
         // Quitar cuando la wallet use la red de verdad.
-        try {
-            val estado = com.zoka.zkapriv.network.nativebridge.ZokaNativeNetwork.status()
-            android.util.Log.i("ZokaNetProbe", "puente de red OK: " + estado)
-        } catch (t: Throwable) {
-            android.util.Log.e("ZokaNetProbe", "puente de red FALLO: " + t.message, t)
-        }
 
         // Enable edge-to-edge display
         enableEdgeToEdge()

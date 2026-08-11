@@ -1,5 +1,7 @@
+mod tor;
+
 use jni::objects::{JClass, JString};
-use jni::sys::{jint, jstring};
+use jni::sys::{jint, jlong, jstring};
 use jni::JNIEnv;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Once;
@@ -243,4 +245,82 @@ pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeNetw
         Err(_) => r#"{"error":"la desconexion entro en panico"}"#.to_string(),
     };
     java_string(&mut env, respuesta)
+}
+
+/// Altura de la punta de la red: `{"height":N}`.
+///
+/// Se aprende escuchando los anuncios de bloque de los pares, no
+/// preguntandosela a ningun servidor. Recien conectado puede tardar hasta un
+/// par de minutos, que es lo que tarda en pasar un bloque nuevo.
+#[no_mangle]
+pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeNetwork_chainHeight0(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    let salida = catch_unwind(AssertUnwindSafe(zoka::mobile_net::chain_height_json));
+    let respuesta = match salida {
+        Ok(Ok(json)) => json,
+        Ok(Err(err)) => format!(r#"{{"error":{}}}"#, json_string(&err)),
+        Err(_) => r#"{"error":"la consulta de altura entro en panico"}"#.to_string(),
+    };
+    java_string(&mut env, respuesta)
+}
+
+/// Bloques crudos de `from` a `to`, con la misma forma que devolvia la API REST
+/// para que el escaner de la wallet no note el cambio de origen.
+#[no_mangle]
+pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeNetwork_blocksRange0(
+    mut env: JNIEnv,
+    _class: JClass,
+    from: jlong,
+    to: jlong,
+) -> jstring {
+    if from < 0 || to < 0 {
+        return java_string(&mut env, r#"{"error":"las alturas no pueden ser negativas"}"#.to_string());
+    }
+    let salida = catch_unwind(AssertUnwindSafe(|| {
+        zoka::mobile_net::blocks_range_json(from as u64, to as u64)
+    }));
+    let respuesta = match salida {
+        Ok(Ok(json)) => json,
+        Ok(Err(err)) => format!(r#"{{"error":{}}}"#, json_string(&err)),
+        Err(_) => r#"{"error":"la busqueda de bloques entro en panico"}"#.to_string(),
+    };
+    java_string(&mut env, respuesta)
+}
+
+/// Cuerpo de una transaccion privada por su hash.
+///
+/// Casi siempre sale del cache que dejaron los bloques ya bajados; solo va a la
+/// red si ese bloque llego sin el cuerpo.
+#[no_mangle]
+pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeNetwork_privateTxBody0(
+    mut env: JNIEnv,
+    _class: JClass,
+    tx_hash: JString,
+) -> jstring {
+    responder_json(&mut env, tx_hash, "la busqueda del cuerpo entro en panico", |hash| {
+        zoka::mobile_net::private_tx_body_json(hash)
+    })
+}
+
+/// Levanta Tor dentro de la app y devuelve la direccion del proxy SOCKS5 local.
+///
+/// El nodo la recibe despues en `connect`, igual que recibiria la del Tor del
+/// sistema en una PC. Bloquea hasta que Tor termina de arrancar -- decenas de
+/// segundos en una red movil --, asi que hay que llamarla desde un hilo de
+/// fondo.
+///
+/// `cacheDir` tiene que ser el directorio privado de la aplicacion: es el unico
+/// donde se puede escribir sin permisos y el unico que se limpia al
+/// desinstalar.
+#[no_mangle]
+pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeNetwork_startTor0(
+    mut env: JNIEnv,
+    _class: JClass,
+    cache_dir: JString,
+) -> jstring {
+    responder_json(&mut env, cache_dir, "el arranque de Tor entro en panico", |dir| {
+        crate::tor::start_blocking(dir).map(|addr| format!(r#"{{"proxy":{}}}"#, json_string(&addr)))
+    })
 }

@@ -58,6 +58,23 @@ try {
         Copy-Item -LiteralPath $src -Destination (Join-Path $destDir "libc++_shared.so") -Force
         Write-Host "Bundled libc++_shared.so for $abi"
     }
+
+    # cargo-ndk copia a jniLibs cualquier .so que encuentre en el directorio de
+    # salida, incluidos los artefactos intermedios de dependencias como iroh o
+    # if_watch. Nadie los carga -- la app solo abre libzoka_mobile -- pero
+    # Gradle empaqueta todo lo que hay en jniLibs, asi que viajaban en el APK
+    # como varios megas de peso muerto. Se borran aca en vez de listarlos en
+    # .gitignore: no alcanza con no versionarlos, hay que no enviarlos.
+    $seQuedan = @("libzoka_mobile.so", "libc++_shared.so")
+    foreach ($abi in $stlByAbi.Keys) {
+        $destDir = Join-Path $nativeRoot "jniLibs\$abi"
+        Get-ChildItem -LiteralPath $destDir -Filter *.so -File |
+            Where-Object { $seQuedan -notcontains $_.Name } |
+            ForEach-Object {
+                Remove-Item -LiteralPath $_.FullName -Force
+                Write-Host "Descartado artefacto intermedio $($_.Name) de $abi"
+            }
+    }
 } finally {
     Pop-Location
 }

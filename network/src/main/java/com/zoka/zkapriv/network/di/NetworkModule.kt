@@ -3,6 +3,7 @@ package com.zoka.zkapriv.network.di
 import android.content.Context
 import android.content.SharedPreferences
 import com.zoka.zkapriv.core.util.Constants
+import com.zoka.zkapriv.network.api.P2pZokaNodeApi
 import com.zoka.zkapriv.network.api.ZokaNodeApi
 import com.zoka.zkapriv.network.config.RpcEndpointInterceptor
 import com.zoka.zkapriv.network.config.RpcSettings
@@ -62,9 +63,20 @@ object NetworkModule {
             .build()
     }
 
+    /**
+     * De dónde salen los datos de la cadena.
+     *
+     * Antes salían de dos nodos por HTTP. Esos nodos ya no existen, así que la
+     * wallet le pregunta a la red: pide bloques a los pares y publica sus
+     * transacciones por gossip, igual que cualquier otro participante.
+     *
+     * La interfaz no cambió — quien la usaba la sigue usando igual —, solo
+     * cambió quién contesta. Retrofit se sigue armando porque la
+     * infraestructura HTTP la usan otras partes de la app; simplemente ya no es
+     * quien habla con la cadena.
+     */
     @Provides
     @Singleton
-    fun provideZokaNodeApi(retrofit: Retrofit): ZokaNodeApi {
-        return retrofit.create(ZokaNodeApi::class.java)
-    }
+    fun provideZokaNodeApi(@ApplicationContext context: Context): ZokaNodeApi =
+        P2pZokaNodeApi(context)
 }

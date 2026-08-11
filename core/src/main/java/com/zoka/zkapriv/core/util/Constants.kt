@@ -1,9 +1,29 @@
 package com.zoka.zkapriv.core.util
 
 object Constants {
-    // Network - primary RPC (BOOT) + fallback (VPS2)
-    const val ZOKA_MAINNET_RPC         = "http://159.223.119.216:3000/"
-    const val ZOKA_MAINNET_RPC_FALLBACK = "http://157.230.5.103:3000/"
+    // Semillas de la red P2P.
+    //
+    // La wallet ya no le pide los datos de la cadena a ningún servidor: se
+    // conecta a la red y le pide los bloques a los pares. Estas son las
+    // direcciones a las que marca al arrancar, tomadas del manifiesto
+    // docs/mainnet-network.v1.json.
+    //
+    // Son direcciones onion y solo se alcanzan por Tor, que la app levanta
+    // adentro (Arti). Un nodo casero no tiene puerto abierto ni IP fija; la
+    // onion es lo que lo hace alcanzable sin depender de eso.
+    val ZOKA_P2P_SEEDS = listOf(
+        "/onion3/d5pk3nhesk5wlvz4f5unbhcozxgtj7u6mhagauyprjrxndzpwbaoeiid:28080"
+    )
+
+    // RPC HTTP heredado.
+    //
+    // Los dos nodos de DigitalOcean a los que apuntaba esto se dieron de baja y
+    // dejaron la wallet muerta. Ya nadie le pregunta la cadena a esta URL —los
+    // datos salen de la red P2P—, pero sigue existiendo porque Retrofit exige
+    // una URL base válida al construirse y porque la pantalla de ajustes deja
+    // apuntar a un nodo propio.
+    const val ZOKA_MAINNET_RPC         = "http://127.0.0.1:3000/"
+    const val ZOKA_MAINNET_RPC_FALLBACK = "http://127.0.0.1:3000/"
     const val COINGECKO_API = "https://api.coingecko.com/api/v3/"
     const val ZOKA_CHAIN_ID = "zoka-mainnet-zenith-v1"
 

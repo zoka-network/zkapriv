@@ -81,6 +81,77 @@ object ZokaNativeNetwork {
         return disconnect0()
     }
 
+    /**
+     * Levanta Tor dentro de la app y devuelve `{"proxy":"127.0.0.1:PUERTO"}`.
+     *
+     * Bloquea hasta que Tor termina de arrancar — decenas de segundos en una
+     * red móvil, porque hay que bajar el directorio de la red y armar los
+     * primeros circuitos. Llamar desde un hilo de fondo.
+     *
+     * @param cacheDir el directorio privado de la app (`context.filesDir`).
+     */
+    fun startTor(cacheDir: String): String {
+        requireLibrary()
+        return startTor0(cacheDir)
+    }
+
+    /**
+     * Levanta Tor y conecta a la red en un solo paso, que es como la wallet lo
+     * necesita: las semillas son direcciones onion y sin Tor no se alcanzan.
+     *
+     * Si Tor falla devuelve su error tal cual, sin intentar conectar: sin Tor
+     * no hay forma de llegar a una onion, así que reintentar solo daría un
+     * segundo error menos claro que el primero.
+     *
+     * Devuelve el mismo JSON de estado que [status].
+     */
+    fun startTorAndConnect(cacheDir: String, seedsJson: String): String {
+        requireLibrary()
+        val tor = startTor0(cacheDir)
+        val proxy = PROXY_REGEX.find(tor)?.groupValues?.get(1) ?: return tor
+        return connect0("{\"seeds\":" + seedsJson + ",\"tor_proxy\":\"" + proxy + "\"}")
+    }
+
+    /**
+     * Altura de la punta de la red: `{"height":N}`.
+     *
+     * Se aprende escuchando lo que anuncian los pares, no preguntándosela a
+     * ningún servidor. Recién conectada puede tardar hasta un par de minutos:
+     * hasta que no pase un bloque nuevo, no hay nada que escuchar.
+     */
+    fun chainHeight(): String {
+        requireLibrary()
+        return chainHeight0()
+    }
+
+    /**
+     * Bloques crudos del rango, con la misma forma que devolvía la API REST.
+     *
+     * Cada bloque es un pedido punto a punto repartido entre los pares
+     * conectados. Sobre Tor un rango grande tarda; llamarla desde un hilo de
+     * fondo.
+     */
+    fun blocksRange(from: Long, to: Long): String {
+        requireLibrary()
+        return blocksRange0(from, to)
+    }
+
+    /**
+     * Cuerpo de una transacción privada por su hash.
+     *
+     * Casi siempre sale del caché que dejaron los bloques ya bajados.
+     */
+    fun privateTxBody(txHash: String): String {
+        requireLibrary()
+        return privateTxBody0(txHash)
+    }
+
+    private val PROXY_REGEX = Regex("\"proxy\"\\s*:\\s*\"([^\"]+)\"")
+
+    @JvmStatic private external fun startTor0(cacheDir: String): String
+    @JvmStatic private external fun chainHeight0(): String
+    @JvmStatic private external fun blocksRange0(from: Long, to: Long): String
+    @JvmStatic private external fun privateTxBody0(txHash: String): String
     @JvmStatic private external fun connect0(configJson: String): String
     @JvmStatic private external fun publishPrivateTx0(txJson: String): String
     @JvmStatic private external fun status0(): String

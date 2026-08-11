@@ -14,6 +14,22 @@ jni = "0.21"
 # into seconds on-device. `randomx` stays off (no mining on the phone).
 zoka = { path = "../..", default-features = false, features = ["mobile"] }
 
+# Tor embebido, solo en el crate de Android.
+#
+# Va aca y no en el crate del nodo a proposito: el nodo de escritorio ya habla
+# Tor por un proxy SOCKS externo y no tiene por que cargar con un cliente Tor
+# adentro. El telefono si lo necesita -- no hay un Tor del sistema al que
+# recurrir --, asi que Arti se levanta en el proceso y expone SOCKS local, que
+# es exactamente lo que el nodo espera.
+#
+# Medido: 0,8 MB en armeabi-v7a. "bundled" compila SQLite desde el fuente
+# porque Android no trae libsqlite3 para el enlazador del NDK, y Arti lo usa
+# para su cache de directorios.
+arti-client = { version = "0.45", default-features = false, features = ["tokio", "rustls", "onion-service-client"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+tor-rtcompat = "0.45"
+tokio = { version = "1", features = ["rt", "net", "io-util", "macros"] }
+
 # Aggressive release optimization for the on-device Groth16 prover. This is a
 # standalone crate (not a workspace member), so its own [profile.release]
 # governs the .so. LTO + a single codegen unit let the optimizer inline across

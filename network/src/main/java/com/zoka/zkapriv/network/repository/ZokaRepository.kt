@@ -118,16 +118,23 @@ class ZokaRepository @Inject constructor(
         // rate limiter.
         private const val PRIVATE_TX_FETCH_BATCH_SIZE = 6
         private const val PRIVATE_TX_BATCH_DELAY_MS = 150L
-        // The shared OkHttp client's read timeout (120s) is sized for
-        // server-side proof generation on a different endpoint. A single tx
-        // body fetch should never legitimately take that long, so cap it
-        // independently — a stuck request must not block a whole batch.
-        private const val PRIVATE_TX_FETCH_TIMEOUT_MS = 10_000L
-        // Same reasoning as PRIVATE_TX_FETCH_TIMEOUT_MS, sized up for a
-        // multi-block payload: a stalled raw-block-range fetch must not eat
-        // the shared client's 120s read timeout while scanning hundreds of
-        // blocks sequentially.
-        private const val RAW_BLOCK_RANGE_TIMEOUT_MS = 20_000L
+        // Cuanto se espera el cuerpo de una transaccion privada.
+        //
+        // Casi siempre sale del cache que dejaron los bloques ya bajados y
+        // vuelve al instante. Los 45 segundos son para el caso raro en que hay
+        // que pedirselo a un par por Tor; con los 10 originales, pensados para
+        // un servidor HTTP cercano, ese caso fallaba siempre.
+        private const val PRIVATE_TX_FETCH_TIMEOUT_MS = 45_000L
+        // Cuanto se le da a un rango de bloques, por bloque pedido.
+        //
+        // Antes eran 20 segundos fijos, medidos contra un servidor HTTP que
+        // devolvia el rango entero en una respuesta. Ahora cada bloque es un
+        // pedido punto a punto que viaja por Tor, asi que el costo crece con el
+        // tamaño del rango y un techo fijo lo unico que garantiza es que el
+        // escaneo falle siempre.
+        private const val RAW_BLOCK_TIMEOUT_PER_BLOCK_MS = 2_000L
+        // Piso para rangos chicos: armar el circuito ya cuesta esto.
+        private const val RAW_BLOCK_RANGE_TIMEOUT_FLOOR_MS = 30_000L
     }
 
     data class BalanceInfo(
@@ -347,7 +354,16 @@ class ZokaRepository @Inject constructor(
     }
 
     private suspend fun fetchRawBlocksRange(from: Long, to: Long) =
-        withTimeout(RAW_BLOCK_RANGE_TIMEOUT_MS) { zokaNodeApi.getRawBlocksRange(from, to) }
+        withTimeout(rawBlockRangeTimeoutMs(from, to)) {
+            zokaNodeApi.getRawBlocksRange(from, to)
+        }
+
+    /** Tiempo que se le da a un rango, proporcional a cuantos bloques trae. */
+    private fun rawBlockRangeTimeoutMs(from: Long, to: Long): Long {
+        val bloques = (to - from + 1L).coerceAtLeast(1L)
+        return (bloques * RAW_BLOCK_TIMEOUT_PER_BLOCK_MS)
+            .coerceAtLeast(RAW_BLOCK_RANGE_TIMEOUT_FLOOR_MS)
+    }
 
     private suspend fun scanCoinbaseBalance(address: String, chainHeight: Long): BalanceInfo {
         var matureAtoms = 0L
