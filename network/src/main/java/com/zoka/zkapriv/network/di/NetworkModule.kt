@@ -5,7 +5,6 @@ import android.content.SharedPreferences
 import com.zoka.zkapriv.core.util.Constants
 import com.zoka.zkapriv.network.api.P2pZokaNodeApi
 import com.zoka.zkapriv.network.api.ZokaNodeApi
-import com.zoka.zkapriv.network.config.RpcEndpointInterceptor
 import com.zoka.zkapriv.network.config.RpcSettings
 import dagger.Module
 import dagger.Provides
@@ -29,9 +28,21 @@ object NetworkModule {
         return context.getSharedPreferences("zoka_transactions", Context.MODE_PRIVATE)
     }
 
+    /**
+     * Cliente HTTP compartido, ya sin el interceptor de RPC.
+     *
+     * Ese interceptor reescribía el host de **toda** petición que pasara por
+     * este cliente para mandarla al nodo. Como el mismo cliente lo usan las
+     * APIs de precios, terminaba pidiéndole las cotizaciones al nodo: los
+     * precios nunca funcionaron, y el síntoma parecía de CoinGecko.
+     *
+     * Ahora los datos de la cadena salen de la red P2P y nadie habla por HTTP
+     * con el nodo, así que el interceptor no tiene nada que reescribir. Se saca
+     * en vez de acotarlo a ciertas rutas: no hay ruta que acotar.
+     */
     @Provides
     @Singleton
-    fun provideOkHttpClient(rpcEndpointInterceptor: RpcEndpointInterceptor): OkHttpClient {
+    fun provideOkHttpClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             // Generous read timeout: /private/wallet/send-from-seed does a
@@ -41,7 +52,6 @@ object NetworkModule {
             // longer ceiling is safe across the board.
             .readTimeout(120, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
-            .addInterceptor(rpcEndpointInterceptor)
         // Only log in debug builds. BODY level exposes signature_hex and public_key_hex.
         if (com.zoka.zkapriv.network.BuildConfig.DEBUG) {
             builder.addInterceptor(HttpLoggingInterceptor().apply {
@@ -54,8 +64,9 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideRetrofit(okHttpClient: OkHttpClient): Retrofit {
-        // Base URL is BOOT (primary RPC). RpcEndpointInterceptor rewrites
-        // per-request to the freshest node and falls back on connection failure.
+        // Retrofit exige una URL base al construirse aunque nadie la use para la
+        // cadena: los precios traen la suya y los datos de cadena salen de la
+        // red P2P.
         return Retrofit.Builder()
             .baseUrl(Constants.ZOKA_MAINNET_RPC)
             .client(okHttpClient)

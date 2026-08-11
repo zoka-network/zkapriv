@@ -109,8 +109,20 @@ object ZokaNativeNetwork {
         requireLibrary()
         val tor = startTor0(cacheDir)
         val proxy = PROXY_REGEX.find(tor)?.groupValues?.get(1) ?: return tor
-        return connect0("{\"seeds\":" + seedsJson + ",\"tor_proxy\":\"" + proxy + "\"}")
+        // El directorio va explícito. El nodo guarda su identidad de red en una
+        // ruta relativa al directorio de trabajo, que en un servidor es el suyo
+        // pero en Android es `/` y es de solo lectura: sin decírselo no llega ni
+        // a arrancar.
+        return connect0(
+            "{\"seeds\":" + seedsJson +
+                ",\"tor_proxy\":\"" + proxy + "\"" +
+                ",\"data_dir\":" + comoJson(cacheDir) + "}"
+        )
     }
+
+    /** Una ruta con contrabarras o comillas rompería el JSON si fuera pegada tal cual. */
+    private fun comoJson(texto: String): String =
+        "\"" + texto.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
     /**
      * Altura de la punta de la red: `{"height":N}`.
