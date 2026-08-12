@@ -101,6 +101,8 @@ class ZokaRepository @Inject constructor(
         const val COINBASE_SENDER = "zoka:coinbase:v1"
         private const val COINBASE_MATURITY_BLOCKS = 60L
         private const val BALANCE_CACHE_TTL_MS = 30_000L
+        private const val BALANCE_SCAN_SCHEMA_VERSION = 1
+        private const val MAX_BALANCE_SCAN_SNAPSHOT_CHARS = 2 * 1024 * 1024
         private const val FULL_SCAN_CACHE_TTL_MS = 5 * 60 * 1_000L
         private const val PENDING_FULL_SCAN_CACHE_TTL_MS = 10_000L
         // Only flag a tx FAILED once NO node has its body and it is in no
@@ -395,6 +397,63 @@ class ZokaRepository @Inject constructor(
 
     // ── Full UTXO scan (requires scan key) ───────────────────────────────────
 
+    private data class CoinbaseEntry(
+        val amountAtoms: Long,
+        val unlockHeight: Long,
+        val outputId: String,
+        val commitmentHex: String
+    )
+
+    /**
+     * Lo que el escaneo de bloques ya averiguó, para no volver a averiguarlo.
+     *
+     * Recorrer la cadena entera en cada refresco era razonable contra una API
+     * REST cercana: un rango de 250 bloques volvía en un suspiro. Pidiéndoselos
+     * a la red bloque por bloque son decenas de minutos, y con el saldo
+     * caducando cada 30 segundos el escaneo nunca alcanzaba a terminar antes de
+     * que lo reiniciaran. La wallet quedaba en 0 para siempre, haciendo trabajo
+     * sin llegar nunca a nada.
+     *
+     * `tipHash` es el ancla contra reorganizaciones: si el bloque que estaba en
+     * `scannedHeight` ya no es el mismo, la cadena se movió bajo nuestros pies
+     * y hay que rehacer el escaneo.
+     */
+    private data class BalanceScanSnapshot(
+        val schemaVersion: Int = BALANCE_SCAN_SCHEMA_VERSION,
+        val address: String = "",
+        val scannedHeight: Long = 0,
+        val tipHash: String = "",
+        val coinbases: List<CoinbaseEntry> = emptyList(),
+        val privateTxHashes: List<String> = emptyList(),
+        val nullifiers: List<String> = emptyList(),
+        val txTimestamps: Map<String, Long> = emptyMap()
+    )
+
+    private fun readBalanceScanSnapshot(address: String): BalanceScanSnapshot? =
+        runCatching {
+            val raw = secureStorage.getBalanceScanSnapshot(address) ?: return null
+            val snap = gson.fromJson(raw, BalanceScanSnapshot::class.java)
+            snap.takeIf {
+                it.schemaVersion == BALANCE_SCAN_SCHEMA_VERSION &&
+                    it.address == address &&
+                    it.scannedHeight > 0 &&
+                    it.tipHash.isNotBlank()
+            }
+        }.getOrNull()
+
+    private fun writeBalanceScanSnapshot(snapshot: BalanceScanSnapshot) {
+        runCatching {
+            val json = gson.toJson(snapshot)
+            if (json.length > MAX_BALANCE_SCAN_SNAPSHOT_CHARS) {
+                // Mejor rehacer el escaneo que guardar algo que no entra.
+                secureStorage.clearBalanceScanSnapshot(snapshot.address)
+            } else {
+                secureStorage.storeBalanceScanSnapshot(snapshot.address, json)
+            }
+        }
+    }
+
+
     private suspend fun scanFullBalance(
         address: String,
         scanKeyBytes: ByteArray,
@@ -410,10 +469,6 @@ class ZokaRepository @Inject constructor(
         val spendKeyRaw = MessageDigest.getInstance("SHA-256").digest(spendInput)
         val spendScalar = Ristretto255.scalarFromSecretBytes(spendKeyRaw)
 
-        data class CoinbaseEntry(
-            val amountAtoms: Long, val unlockHeight: Long,
-            val outputId: String, val commitmentHex: String
-        )
         val myCoinbases = mutableListOf<CoinbaseEntry>()
         val allPrivateTxHashes = linkedSetOf<String>()
         // Real on-chain time (ms) of each private tx, taken from its block header,
@@ -434,7 +489,44 @@ class ZokaRepository @Inject constructor(
         // so we skip every block before it existed — there is provably nothing
         // of ours there. Imported wallets pass 0 and scan from genesis. This is
         // the safe optimization: it never drops history a wallet could own.
-        var from = restoreHeight.coerceAtLeast(1L)
+        // Retomar donde quedó el escaneo anterior, si sigue siendo válido.
+        //
+        // Se comprueba el ancla antes de confiar: se pide el bloque que estaba
+        // en `scannedHeight` y se mira si sigue teniendo el mismo hash. Si la
+        // cadena se reorganizó, ese bloque ya no es el mismo y todo lo
+        // acumulado podría hablar de una rama que dejó de existir, así que se
+        // rehace desde el principio. Es la única forma de que retomar sea
+        // seguro y no una fuente silenciosa de saldos equivocados.
+        var desde = restoreHeight.coerceAtLeast(1L)
+        var anclaHash = ""
+        val previa = readBalanceScanSnapshot(address)
+        if (previa != null && previa.scannedHeight in desde..chainHeight) {
+            val ancla = runCatching {
+                fetchRawBlocksRange(previa.scannedHeight, previa.scannedHeight)
+                    .blocks.singleOrNull()?.header?.hash.orEmpty()
+            }.getOrDefault("")
+            if (ancla.isNotBlank() && ancla == previa.tipHash) {
+                desde = previa.scannedHeight + 1L
+                anclaHash = previa.tipHash
+                previa.coinbases.forEach { myCoinbases.add(it) }
+                allPrivateTxHashes.addAll(previa.privateTxHashes)
+                allInputNullifiers.addAll(previa.nullifiers)
+                txTimestampByHash.putAll(previa.txTimestamps)
+                confirmedPrivateTxHashes.addAll(previa.privateTxHashes)
+                Log.d(
+                    "ZokaRepository",
+                    "scanFullBalance: retomando desde $desde (instantánea en ${previa.scannedHeight})"
+                )
+            } else {
+                Log.d(
+                    "ZokaRepository",
+                    "scanFullBalance: la instantánea ya no ancla en la cadena, se rehace"
+                )
+                secureStorage.clearBalanceScanSnapshot(address)
+            }
+        }
+
+        var from = desde
         while (from <= chainHeight) {
             val to = minOf(from + RAW_BLOCK_SCAN_BATCH_SIZE - 1, chainHeight)
             val response = fetchRawBlocksRange(from, to)
@@ -465,8 +557,26 @@ class ZokaRepository @Inject constructor(
                 // in flight. Used by withReconciledPendings() to clear
                 // matching pending-out reservations.
                 confirmedPrivateTxHashes.addAll(block.privateTxHashes)
+                block.header?.hash?.takeIf { it.isNotBlank() }?.let { anclaHash = it }
             }
             from = to + 1
+        }
+
+        // Guardar lo aprendido antes de seguir con las fases que salen a pedir
+        // cuerpos de transacciones: si eso falla, el recorrido de bloques -- que
+        // es lo caro -- no se pierde.
+        if (anclaHash.isNotBlank() && chainHeight >= desde - 1) {
+            writeBalanceScanSnapshot(
+                BalanceScanSnapshot(
+                    address = address,
+                    scannedHeight = chainHeight,
+                    tipHash = anclaHash,
+                    coinbases = myCoinbases.toList(),
+                    privateTxHashes = allPrivateTxHashes.toList(),
+                    nullifiers = allInputNullifiers.toList(),
+                    txTimestamps = txTimestampByHash.toMap()
+                )
+            )
         }
 
         // Phase 2: Fetch all private txs — collect owned outputs (and, as a

@@ -60,6 +60,31 @@ class SecureStorage @Inject constructor(
     fun clearLocalPrivateChainSnapshot() {
         prefs.edit().remove(KEY_LOCAL_PRIVATE_CHAIN_SNAPSHOT).apply()
     }
+
+    /**
+     * Instantánea del escaneo de saldo, por dirección.
+     *
+     * Guarda hasta dónde se escaneó la cadena y qué se encontró, para no tener
+     * que volver a bajarla entera en cada refresco. Sobre una API REST cercana
+     * rebajar todo costaba segundos; pidiendo bloque por bloque a la red, son
+     * decenas de minutos, y el escaneo nunca alcanzaba a terminar antes de que
+     * lo reiniciaran.
+     *
+     * Va por dirección porque cada una ve cosas distintas de la misma cadena.
+     */
+    fun storeBalanceScanSnapshot(address: String, snapshotJson: String) {
+        prefs.edit().putString(balanceScanKey(address), snapshotJson).apply()
+    }
+
+    fun getBalanceScanSnapshot(address: String): String? {
+        return prefs.getString(balanceScanKey(address), null)
+    }
+
+    fun clearBalanceScanSnapshot(address: String) {
+        prefs.edit().remove(balanceScanKey(address)).apply()
+    }
+
+    private fun balanceScanKey(address: String): String = "balance_scan_$address"
     
     fun setActiveWallet(address: String) {
         prefs.edit().putString(Constants.PREF_KEY_ACTIVE_WALLET, address).apply()
