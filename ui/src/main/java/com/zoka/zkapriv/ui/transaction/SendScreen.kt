@@ -129,6 +129,7 @@ fun SendScreen(
                 FilledTonalButton(
                     onClick = { viewModel.requestAuthentication() },
                     enabled = uiState.isValidAmount && uiState.isValidAddress && !uiState.isLoading
+                        && uiState.isBalanceVerified
                         && uiState.recipientAddress.isNotBlank() && uiState.amount.isNotBlank(),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -206,6 +207,39 @@ fun SendScreen(
                                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                             ),
                             color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+
+            if (!uiState.isLoading && !uiState.isBalanceVerified) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Outlined.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Text(
+                            text = uiState.balanceError ?: if (uiState.missingTxCount > 0) {
+                                "Balance incomplete: ${uiState.missingTxCount} private transaction " +
+                                    "${if (uiState.missingTxCount == 1) "body is" else "bodies are"} still missing. " +
+                                    "Sending is disabled until the scan catches up at height ${uiState.scannedHeight}."
+                            } else {
+                                "Balance has not been verified at the current P2P chain tip. Sending is disabled."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer
                         )
                     }
                 }
@@ -290,6 +324,7 @@ fun SendScreen(
                         // MAX button - smaller and aligned
                         Button(
                             onClick = { viewModel.setMaxAmount() },
+                            enabled = uiState.isBalanceVerified && !uiState.isLoading,
                             modifier = Modifier
                                 .height(48.dp)
                                 .width(58.dp),
@@ -318,7 +353,7 @@ fun SendScreen(
                     ) {
                         Column {
                             Spacer(modifier = Modifier.height(8.dp))
-                            if (!uiState.isValidAmount) {
+                            if (!uiState.isValidAmount && uiState.isBalanceVerified) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.padding(horizontal = 4.dp)
@@ -533,7 +568,10 @@ fun SendScreen(
                 },
                 confirmButton = {
                     TextButton(
-                        onClick = { viewModel.requestAuthentication() },
+                        onClick = {
+                            viewModel.dismissResultScreen()
+                            viewModel.requestAuthentication()
+                        },
                         colors = ButtonDefaults.textButtonColors(
                             contentColor = MaterialTheme.colorScheme.onSurface
                         )

@@ -62,6 +62,8 @@ class DashboardViewModel @Inject constructor(
                             hasPendingOut = persistedBalance?.hasPendingOut ?: false,
                             hasMining = persistedBalance?.hasMining ?: state.hasMining,
                             isBalanceIncomplete = persistedBalance?.isIncomplete ?: false,
+                            isBalanceVerified = persistedBalance?.isVerified ?: false,
+                            balanceVerificationIssue = persistedBalance?.verificationIssue,
                             missingTxCount = persistedBalance?.missingTxCount ?: 0,
                             isLoading = cachedBalance == null && state.balance == "0"
                         )
@@ -151,6 +153,8 @@ class DashboardViewModel @Inject constructor(
                             hasPendingOut = info.hasPendingOut,
                             hasMining = info.hasMining,
                             isBalanceIncomplete = info.isIncomplete,
+                            isBalanceVerified = info.isVerified,
+                            balanceVerificationIssue = info.verificationIssue,
                             missingTxCount = info.missingTxCount,
                             isLoading = false
                         )}
@@ -173,6 +177,9 @@ class DashboardViewModel @Inject constructor(
                             pendingOutBalance = "0",
                             hasPendingOut = false,
                             hasMining = false,
+                            isBalanceVerified = false,
+                            balanceVerificationIssue =
+                                "The balance could not be verified from the P2P network.",
                             isLoading = false
                         ) }
                     }
@@ -182,7 +189,15 @@ class DashboardViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 android.util.Log.e("DashboardVM", "loadWalletData error", e)
-                _uiState.update { it.copy(balance = "0", immatureBalance = "0", hasMining = false, isLoading = false) }
+                _uiState.update { it.copy(
+                    balance = "0",
+                    immatureBalance = "0",
+                    hasMining = false,
+                    isBalanceVerified = false,
+                    balanceVerificationIssue =
+                        "The balance could not be verified from the P2P network.",
+                    isLoading = false
+                ) }
             }
 
             loadMarketStats(matureBalance)
@@ -284,5 +299,7 @@ data class DashboardState(
     val activeAccountColor: String = "#2196F3",
     val accountCount: Int = 1,
     val isBalanceIncomplete: Boolean = false,
+    val isBalanceVerified: Boolean = false,
+    val balanceVerificationIssue: String? = null,
     val missingTxCount: Int = 0
 )

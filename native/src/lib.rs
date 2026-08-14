@@ -289,6 +289,33 @@ pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeNetw
     java_string(&mut env, respuesta)
 }
 
+/// Resumenes de bloque de un tramo: lo justo para escanear un saldo.
+///
+/// Un bloque entero pesa unos 4.500 bytes y mas de la mitad es la prueba de
+/// rango del coinbase, que solo hace falta para gastar. Bajar la cadena asi son
+/// 77 MB sobre Tor. Un resumen son unos 500 bytes. Si el par no conoce el
+/// protocolo, por dentro se cae a bloques enteros sin que quien llama se entere.
+#[no_mangle]
+pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeNetwork_blocksDigestRange0(
+    mut env: JNIEnv,
+    _class: JClass,
+    from: jlong,
+    to: jlong,
+) -> jstring {
+    if from < 0 || to < 0 {
+        return java_string(&mut env, r#"{"error":"las alturas no pueden ser negativas"}"#.to_string());
+    }
+    let salida = catch_unwind(AssertUnwindSafe(|| {
+        zoka::mobile_net::blocks_digest_range_json(from as u64, to as u64)
+    }));
+    let respuesta = match salida {
+        Ok(Ok(json)) => json,
+        Ok(Err(err)) => format!(r#"{{"error":{}}}"#, json_string(&err)),
+        Err(_) => r#"{"error":"la busqueda de resumenes entro en panico"}"#.to_string(),
+    };
+    java_string(&mut env, respuesta)
+}
+
 /// Cuerpo de una transaccion privada por su hash.
 ///
 /// Casi siempre sale del cache que dejaron los bloques ya bajados; solo va a la

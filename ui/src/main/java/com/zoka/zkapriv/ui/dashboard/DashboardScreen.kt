@@ -306,6 +306,8 @@ fun DashboardScreen(
                         onToggleVisibility = viewModel::toggleBalanceVisibility,
                         zokaStats = uiState.zokaStats,
                         isBalanceIncomplete = uiState.isBalanceIncomplete,
+                        isBalanceVerified = uiState.isBalanceVerified,
+                        balanceVerificationIssue = uiState.balanceVerificationIssue,
                         missingTxCount = uiState.missingTxCount
                     )
                 }
@@ -473,6 +475,8 @@ private fun Web3BalanceCard(
     onToggleVisibility: () -> Unit,
     zokaStats: com.zoka.zkapriv.price.model.ZokaStats?,
     isBalanceIncomplete: Boolean = false,
+    isBalanceVerified: Boolean = false,
+    balanceVerificationIssue: String? = null,
     missingTxCount: Int = 0
 ) {
     val displayUsdValue = if (totalPortfolioValue > 0) totalPortfolioValue else usdValue
@@ -687,7 +691,39 @@ private fun Web3BalanceCard(
                     }
                 }
 
-                // Mining indicator — shown when there are immature coinbase outputs
+                if (!isLoading && !isBalanceHidden && !isBalanceVerified) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.errorContainer
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Outlined.Warning,
+                                contentDescription = "Incomplete balance",
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = balanceVerificationIssue ?: if (isBalanceIncomplete) {
+                                    "$missingTxCount private transaction " +
+                                        "${if (missingTxCount == 1) "body is" else "bodies are"} still missing. " +
+                                        "This balance may be lower than the real balance and cannot be spent yet."
+                                } else {
+                                    "This saved balance has not been verified at the current P2P chain tip."
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                }
+
                 if (!isLoading && hasMining && !isBalanceHidden) {
                     Surface(
                         shape = RoundedCornerShape(10.dp),

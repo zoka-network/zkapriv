@@ -126,19 +126,43 @@ data class ZokaRawBlockHeader(
     val blockHeight: Long = 0,
     @SerializedName("hash")
     val hash: String = "",
+    @SerializedName("prev_hash")
+    val prevHash: String = "",
     @SerializedName("timestamp")
     val timestamp: Long? = null
 )
 
 data class ZokaRawPrivateCoinbase(
+    @SerializedName("block_height")
+    val blockHeight: Long = 0,
     @SerializedName("recipient_address")
     val recipientAddress: String = "",
     @SerializedName("unlock_height")
     val unlockHeight: Long = 0,
     @SerializedName("output_id")
     val outputId: String = "",
+    @SerializedName("asset_tag")
+    val assetTag: String = "",
+    @SerializedName("asset_tag_commitment")
+    val assetTagCommitment: String = "",
+    @SerializedName("recipient_commitment")
+    val recipientCommitment: String = "",
+    @SerializedName("stealth_address")
+    val stealthAddress: String = "",
+    @SerializedName("ephemeral_pubkey")
+    val ephemeralPubkey: List<Int> = emptyList(),
     @SerializedName("commitment")
-    val commitment: String = ""
+    val commitment: String = "",
+    @SerializedName("amount_commitment")
+    val amountCommitment: String = "",
+    @SerializedName("range_proof")
+    val rangeProof: List<Int> = emptyList(),
+    @SerializedName("one_time_public_key")
+    val oneTimePublicKey: String = "",
+    @SerializedName("encrypted_amount")
+    val encryptedAmount: List<Int> = emptyList(),
+    @SerializedName("commitment_blind")
+    val commitmentBlind: List<Int> = emptyList()
 )
 
 data class ZokaRawTransaction(

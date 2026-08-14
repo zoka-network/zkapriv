@@ -46,6 +46,24 @@ class IncrementalPrivateChainScannerTest {
         assertEquals(listOf("alice"), alice.coinbases.map(::coinbaseRecipient))
         assertEquals(listOf("bob"), bob.coinbases.map(::coinbaseRecipient))
         assertEquals(listOf(1L to 2L, 1L to 2L), fixture.requestedRanges)
+        assertEquals(listOf(1L to 1L, 2L to 2L), fixture.requestedFullRanges)
+    }
+
+    @Test
+    fun refreshUsesDigestsAndDownloadsOnlyOwnedCoinbaseBlocksInFull() = runBlocking {
+        val fixture = ScannerFixture(
+            blocks = mutableListOf(
+                block(1, "block-1", coinbaseRecipient = "someone-else"),
+                block(2, "block-2", coinbaseRecipient = "alice"),
+                block(3, "block-3", privateTxHashes = listOf("private-1"))
+            )
+        )
+
+        val state = fixture.scanner.refresh("alice", 3)
+
+        assertEquals(listOf(1L to 3L), fixture.requestedRanges)
+        assertEquals(listOf(2L to 2L), fixture.requestedFullRanges)
+        assertEquals(listOf("alice"), state.coinbases.map(::coinbaseRecipient))
     }
 
     @Test
@@ -118,10 +136,21 @@ class IncrementalPrivateChainScannerTest {
         snapshotStore: PrivateChainSnapshotStore = NoOpPrivateChainSnapshotStore
     ) {
         val requestedRanges = mutableListOf<Pair<Long, Long>>()
+        val requestedFullRanges = mutableListOf<Pair<Long, Long>>()
         val requestedBodies = mutableListOf<String>()
         val scanner = IncrementalPrivateChainScanner(
-            rawBlocksRange = { from, to ->
+            blockDigestsRange = { from, to ->
                 requestedRanges += from to to
+                ZokaRawBlocksRangeResponse(
+                    fromHeight = from,
+                    toHeight = to,
+                    blocks = blocks.filter { block ->
+                        block.header?.blockHeight in from..to
+                    }
+                )
+            },
+            rawBlocksRange = { from, to ->
+                requestedFullRanges += from to to
                 ZokaRawBlocksRangeResponse(
                     fromHeight = from,
                     toHeight = to,
@@ -133,7 +162,10 @@ class IncrementalPrivateChainScannerTest {
             privateTransactionRaw = { hash ->
                 requestedBodies += hash
                 check(hash !in unavailableBodies)
-                JsonObject().apply { addProperty("id", hash) }
+                JsonObject().apply {
+                    addProperty("id", hash)
+                    addProperty("tx_hash", hash)
+                }
             },
             snapshotStore = snapshotStore
         )
@@ -165,11 +197,28 @@ class IncrementalPrivateChainScannerTest {
             coinbaseRecipient: String? = null,
             privateTxHashes: List<String> = emptyList()
         ): ZokaRawBlockResponse = ZokaRawBlockResponse(
-            header = ZokaRawBlockHeader(blockHeight = height, hash = hash),
+            header = ZokaRawBlockHeader(
+                blockHeight = height,
+                hash = hash,
+                prevHash = if (height > 1) "block-${height - 1}" else "genesis"
+            ),
             privateCoinbase = coinbaseRecipient?.let { recipient ->
                 ZokaRawPrivateCoinbase(
+                    blockHeight = height,
                     recipientAddress = recipient,
-                    outputId = "coinbase-$hash"
+                    outputId = "coinbase-$hash",
+                    assetTag = "ZOKA",
+                    assetTagCommitment = "asset-tag-commitment",
+                    recipientCommitment = "recipient-commitment",
+                    stealthAddress = "stealth-address",
+                    ephemeralPubkey = listOf(1, 2, 3),
+                    commitment = "commitment",
+                    amountCommitment = "amount-commitment",
+                    rangeProof = listOf(4, 5, 6),
+                    oneTimePublicKey = "one-time-public-key",
+                    encryptedAmount = listOf(7, 8),
+                    commitmentBlind = listOf(9, 10),
+                    unlockHeight = height + 60
                 )
             },
             transactions = coinbaseRecipient?.let { recipient ->

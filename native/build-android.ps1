@@ -34,6 +34,7 @@ if (-not $libclangDir) {
 $env:ANDROID_SDK_ROOT = $sdkRoot
 $env:ANDROID_NDK_HOME = $ndkRoot
 $env:LIBCLANG_PATH = $libclangDir
+$env:CLANG_PATH = Join-Path $llvmRoot "bin\clang.exe"
 $env:BINDGEN_EXTRA_CLANG_ARGS = "-I$($clangResourceInclude.Replace('\', '/'))"
 $env:CPATH = $clangResourceInclude
 

@@ -47,6 +47,17 @@ interface ZokaNodeApi {
         @Path("to") to: Long
     ): ZokaRawBlocksRangeResponse
 
+    /// Resúmenes de bloque: lo justo para escanear un saldo.
+    ///
+    /// Un bloque entero pesa unos 4.500 bytes y más de la mitad es la prueba de
+    /// rango del coinbase, que solo hace falta para gastar la nota. Recorrer la
+    /// cadena en bloques enteros son 77 MB; en resúmenes, unos 8.
+    ///
+    /// Por defecto cae a los bloques enteros, así que una implementación que no
+    /// sepa de resúmenes sigue funcionando sin cambios.
+    suspend fun getBlockDigestsRange(from: Long, to: Long): ZokaRawBlocksRangeResponse =
+        getRawBlocksRange(from, to)
+
     @GET("transactions/{hash}")
     suspend fun getTransaction(@Path("hash") hash: String): ZokaTransactionResponse
 

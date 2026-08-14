@@ -147,10 +147,10 @@ class RpcSettings @Inject constructor(
     //
     // Records every send the user initiated locally so the dashboard can
     // show a "pending" column subtracted from the available balance.
-    // Records are pruned by the balance scan when either:
-    //   - one of the tx's input nullifiers shows up as spent on chain
-    //     (the tx confirmed; the spend is now reflected in `mature`), or
-    //   - the entry is older than PENDING_MAX_AGE_MS (assumed dropped).
+    // Records are pruned only after the balance scan proves that one of the
+    // tx's input nullifiers is on chain. Age alone is not proof that a
+    // broadcast failed: releasing the reservation on a timer can make the UI
+    // offer the same private notes for a second spend.
     //
     // Each record is stored as a single string-valued pref under
     // `pending_send__<address>__<hash>` = `<reservedAtoms>:<ts>` so we
@@ -163,12 +163,12 @@ class RpcSettings @Inject constructor(
     )
 
     fun recordPendingSend(address: String, hash: String, reservedAtoms: Long) {
-        prefs.edit()
+        check(prefs.edit()
             .putString(
                 pendingSendKey(address, hash),
                 "$reservedAtoms:${System.currentTimeMillis()}"
             )
-            .apply()
+            .commit()) { "Could not persist the pending-send reservation" }
     }
 
     fun readPendingSends(address: String): List<PendingSend> {
@@ -189,27 +189,21 @@ class RpcSettings @Inject constructor(
     }
 
     fun removePendingSend(address: String, hash: String) {
-        prefs.edit().remove(pendingSendKey(address, hash)).apply()
+        check(prefs.edit().remove(pendingSendKey(address, hash)).commit()) {
+            "Could not remove the pending-send reservation"
+        }
     }
 
     /**
-     * Drop entries older than [maxAgeMillis] (assumed to have been
-     * dropped from every mempool by now) and return the survivors.
+     * Compatibility entry point for callers that used to expire reservations.
+     * [maxAgeMillis] is intentionally ignored; confirmation/rejection evidence
+     * must drive removal instead of the wall clock.
      */
-    fun expirePendingSends(address: String, maxAgeMillis: Long = PENDING_MAX_AGE_MS): List<PendingSend> {
-        val now = System.currentTimeMillis()
-        val remaining = mutableListOf<PendingSend>()
-        val editor = prefs.edit()
-        for (entry in readPendingSends(address)) {
-            if (now - entry.createdAtMillis > maxAgeMillis) {
-                editor.remove(pendingSendKey(address, entry.hash))
-            } else {
-                remaining.add(entry)
-            }
-        }
-        editor.apply()
-        return remaining
-    }
+    @Suppress("UNUSED_PARAMETER")
+    fun expirePendingSends(
+        address: String,
+        maxAgeMillis: Long = PENDING_MAX_AGE_MS
+    ): List<PendingSend> = readPendingSends(address)
 
     private fun pendingSendPrefix(address: String) = "${PENDING_SEND_PREFIX}${address}__"
     private fun pendingSendKey(address: String, hash: String) =
@@ -223,7 +217,7 @@ class RpcSettings @Inject constructor(
         private const val BALANCE_PREFIX = "balance_cache__"
         private const val PENDING_SEND_PREFIX = "pending_send__"
 
-        /** 30 minutes — past this, an unconfirmed tx is assumed dropped. */
+        /** Legacy caller default; reservations are no longer expired by age. */
         const val PENDING_MAX_AGE_MS: Long = 30L * 60L * 1000L
     }
 }

@@ -149,6 +149,22 @@ object ZokaNativeNetwork {
     }
 
     /**
+     * Resúmenes de bloque del rango: lo justo para escanear un saldo.
+     *
+     * Un bloque entero pesa unos 4.500 bytes y más de la mitad es la prueba de
+     * rango del coinbase, que solo hace falta para gastar la nota. Bajar la
+     * cadena entera así son 77 MB sobre Tor; en resúmenes son unos 8.
+     *
+     * La forma de la respuesta es la misma que [blocksRange], para que el
+     * escáner no tenga que saber por cuál vino. Si el par no sirve resúmenes,
+     * por dentro cae a bloques enteros.
+     */
+    fun blocksDigestRange(from: Long, to: Long): String {
+        requireLibrary()
+        return blocksDigestRange0(from, to)
+    }
+
+    /**
      * Cuerpo de una transacción privada por su hash.
      *
      * Casi siempre sale del caché que dejaron los bloques ya bajados.
@@ -163,6 +179,7 @@ object ZokaNativeNetwork {
     @JvmStatic private external fun startTor0(cacheDir: String): String
     @JvmStatic private external fun chainHeight0(): String
     @JvmStatic private external fun blocksRange0(from: Long, to: Long): String
+    @JvmStatic private external fun blocksDigestRange0(from: Long, to: Long): String
     @JvmStatic private external fun privateTxBody0(txHash: String): String
     @JvmStatic private external fun connect0(configJson: String): String
     @JvmStatic private external fun publishPrivateTx0(txJson: String): String

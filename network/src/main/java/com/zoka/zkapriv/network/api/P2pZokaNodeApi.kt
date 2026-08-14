@@ -1,6 +1,8 @@
 package com.zoka.zkapriv.network.api
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
+import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.zoka.zkapriv.core.util.Constants
@@ -23,6 +25,95 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+
+/**
+ * Serializa la entrada al hilo nativo sin cobrarle al comando el tiempo que
+ * paso esperando su turno. Rust procesa estos comandos en un unico loop; si
+ * se encolan varios a la vez, cada `recv_timeout` nativo corre mientras los
+ * anteriores siguen trabajando y puede abandonar al caller antes de ejecutar.
+ */
+internal class SerializedNativeCommandGate(
+    private val mutex: Mutex = Mutex()
+) {
+    suspend fun <T> run(timeoutMs: Long, command: suspend () -> T): T {
+        require(timeoutMs > 0L) { "Native command timeout must be positive" }
+        return mutex.withLock {
+            if (timeoutMs == Long.MAX_VALUE) {
+                command()
+            } else {
+                withTimeout(timeoutMs) { command() }
+            }
+        }
+    }
+}
+
+/** Presupuestos exteriores de los `recv_timeout` definidos en mobile_net.rs. */
+internal object MobileNativeTimeoutPolicy {
+    private const val MOBILE_PEER_WAIT_MS = 90_000L
+    private const val MOBILE_CHUNK_WAIT_MS = 60_000L
+    private const val MOBILE_CALL_SLACK_MS = 15_000L
+    private const val MOBILE_DIGESTS_BATCH_SIZE = 1_000L
+    private const val MOBILE_BLOCKS_BATCH_SIZE = 32L
+    private const val KOTLIN_JNI_DELIVERY_SLACK_MS = 15_000L
+
+    fun privateTxBodyMs(): Long = outerTimeout(
+        saturatingAdd(MOBILE_PEER_WAIT_MS, MOBILE_CHUNK_WAIT_MS)
+    )
+
+    fun rawBlocksMs(from: Long, to: Long): Long {
+        val blocks = rangeSize(from, to)
+        val nativeWork = saturatingAdd(
+            MOBILE_PEER_WAIT_MS,
+            saturatingMultiply(ceilingDivision(blocks, MOBILE_BLOCKS_BATCH_SIZE), MOBILE_CHUNK_WAIT_MS)
+        )
+        return outerTimeout(nativeWork)
+    }
+
+    fun blockDigestsMs(from: Long, to: Long): Long {
+        val blocks = rangeSize(from, to)
+        val nativeWork = saturatingAdd(
+            saturatingAdd(
+                MOBILE_PEER_WAIT_MS,
+                saturatingMultiply(ceilingDivision(blocks, MOBILE_DIGESTS_BATCH_SIZE), MOBILE_CHUNK_WAIT_MS)
+            ),
+            saturatingMultiply(ceilingDivision(blocks, MOBILE_BLOCKS_BATCH_SIZE), MOBILE_CHUNK_WAIT_MS)
+        )
+        return outerTimeout(nativeWork)
+    }
+
+    // Rust: PEER_WAIT + HEIGHT_DISCOVERY_WAIT + MOBILE_CALL_SLACK.
+    fun chainHeightMs(): Long = saturatingAdd(225_000L, KOTLIN_JNI_DELIVERY_SLACK_MS)
+
+    // Rust: PEER_WAIT + PUBLISH_RETRY_WORK_WAIT + MOBILE_CALL_SLACK.
+    fun publishPrivateTxMs(): Long = saturatingAdd(110_000L, KOTLIN_JNI_DELIVERY_SLACK_MS)
+
+    private fun outerTimeout(nativeWorkMs: Long): Long =
+        saturatingAdd(
+            saturatingAdd(nativeWorkMs, MOBILE_CALL_SLACK_MS),
+            KOTLIN_JNI_DELIVERY_SLACK_MS
+        )
+
+    private fun rangeSize(from: Long, to: Long): Long {
+        require(from >= 0L && to >= from) { "Invalid block range $from..$to" }
+        val distance = to - from
+        return if (distance == Long.MAX_VALUE) Long.MAX_VALUE else distance + 1L
+    }
+
+    private fun ceilingDivision(value: Long, divisor: Long): Long =
+        1L + (value - 1L) / divisor
+
+    private fun saturatingMultiply(left: Long, right: Long): Long =
+        if (left > Long.MAX_VALUE / right) Long.MAX_VALUE else left * right
+
+    private fun saturatingAdd(left: Long, right: Long): Long =
+        if (left > Long.MAX_VALUE - right) Long.MAX_VALUE else left + right
+}
+
+// El nodo y su cola Rust son globales al proceso, por eso el gate tambien lo
+// es: dos instancias accidentales del adaptador no deben volver a encolar en
+// paralelo sobre el mismo hilo nativo.
+private val processNativeCommandGate = SerializedNativeCommandGate()
 
 /**
  * La misma interfaz que hablaba con los nodos centrales, servida por la red.
@@ -89,7 +180,9 @@ class P2pZokaNodeApi(
 
     override suspend fun getChainHeight(): ZokaChainHeightResponse = withContext(Dispatchers.IO) {
         asegurarRed()
-        val json = leerJson(red.chainHeight())
+        val json = processNativeCommandGate.run(MobileNativeTimeoutPolicy.chainHeightMs()) {
+            leerJson(red.chainHeight())
+        }
         ZokaChainHeightResponse(height = json.get("height")?.asLong ?: 0L)
     }
 
@@ -98,27 +191,72 @@ class P2pZokaNodeApi(
         to: Long
     ): ZokaRawBlocksRangeResponse = withContext(Dispatchers.IO) {
         asegurarRed()
-        val json = leerJson(red.blocksRange(from, to))
+        val json = processNativeCommandGate.run(MobileNativeTimeoutPolicy.rawBlocksMs(from, to)) {
+            leerJson(red.blocksRange(from, to))
+        }
+        gson.fromJson(json, ZokaRawBlocksRangeResponse::class.java)
+    }
+
+    override suspend fun getBlockDigestsRange(
+        from: Long,
+        to: Long
+    ): ZokaRawBlocksRangeResponse = withContext(Dispatchers.IO) {
+        asegurarRed()
+        val json = processNativeCommandGate.run(MobileNativeTimeoutPolicy.blockDigestsMs(from, to)) {
+            leerJson(red.blocksDigestRange(from, to))
+        }
+        // Señal local de aceptación: el camino de resúmenes fabrica un header
+        // mínimo, mientras el fallback serializa BlockHeader completo e incluye
+        // merkle_root. Solo se registra en APKs depurables y nunca se exponen
+        // alturas, peers, onions, direcciones, hashes, transacciones ni saldos.
+        if ((context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            val blocks = json.get("blocks")
+                ?.takeIf { it.isJsonArray }
+                ?.asJsonArray
+            val firstHeader = blocks
+                ?.takeIf { it.size() > 0 }
+                ?.get(0)
+                ?.takeIf { it.isJsonObject }
+                ?.asJsonObject
+                ?.get("header")
+                ?.takeIf { it.isJsonObject }
+                ?.asJsonObject
+            val path = when {
+                firstHeader == null -> "unknown"
+                firstHeader.has("merkle_root") -> "full_blocks_fallback"
+                else -> "digests"
+            }
+            Log.d("ZokaMobileNet", "wallet_batch path=$path blocks=${blocks?.size() ?: 0}")
+        }
         gson.fromJson(json, ZokaRawBlocksRangeResponse::class.java)
     }
 
     override suspend fun getPrivateTransactionRaw(hash: String): JsonObject =
         withContext(Dispatchers.IO) {
             asegurarRed()
-            leerJson(red.privateTxBody(hash))
+            processNativeCommandGate.run(MobileNativeTimeoutPolicy.privateTxBodyMs()) {
+                leerJson(red.privateTxBody(hash))
+            }
         }
 
     override suspend fun getPrivateTransaction(hash: String): ZokaPrivateTransactionResponse =
         withContext(Dispatchers.IO) {
             asegurarRed()
-            val cuerpo = leerJson(red.privateTxBody(hash))
+            val cuerpo = processNativeCommandGate.run(MobileNativeTimeoutPolicy.privateTxBodyMs()) {
+                leerJson(red.privateTxBody(hash))
+            }
             gson.fromJson(cuerpo, ZokaPrivateTransactionResponse::class.java)
         }
 
     override suspend fun submitPrivateTx(body: JsonObject): JsonObject =
         withContext(Dispatchers.IO) {
             asegurarRed()
-            leerJson(red.publishPrivateTx(gson.toJson(body)))
+            processNativeCommandGate.run(MobileNativeTimeoutPolicy.publishPrivateTxMs()) {
+                normalizarPublicacionPrivada(
+                    body = body,
+                    respuesta = leerJson(red.publishPrivateTx(gson.toJson(body)))
+                )
+            }
         }
 
     override suspend fun getBlockByHeight(height: Long): ZokaBlockResponse =
@@ -129,12 +267,19 @@ class P2pZokaNodeApi(
 
     override suspend fun getLatestBlock(): ZokaBlockResponse = withContext(Dispatchers.IO) {
         asegurarRed()
-        val punta = leerJson(red.chainHeight()).get("height")?.asLong ?: 0L
+        val punta = processNativeCommandGate.run(MobileNativeTimeoutPolicy.chainHeightMs()) {
+            leerJson(red.chainHeight()).get("height")?.asLong ?: 0L
+        }
         require(punta > 0) { "Todavía no sé a qué altura está la red" }
         bloque(punta)
     }
 
-    private fun bloque(height: Long): ZokaBlockResponse {
+    private suspend fun bloque(height: Long): ZokaBlockResponse =
+        processNativeCommandGate.run(MobileNativeTimeoutPolicy.rawBlocksMs(height, height)) {
+            bloqueSinGate(height)
+        }
+
+    private fun bloqueSinGate(height: Long): ZokaBlockResponse {
         val rango = gson.fromJson(
             leerJson(red.blocksRange(height, height)),
             ZokaRawBlocksRangeResponse::class.java
@@ -192,6 +337,33 @@ class P2pZokaNodeApi(
             throw IllegalStateException(it.asString)
         }
         return json
+    }
+
+    internal companion object {
+        /**
+         * Mantiene el contrato de [ZokaNodeApi.submitPrivateTx]. El transporte
+         * P2P confirma la difusiÃ³n con `published=true`, mientras el flujo de
+         * autocustodia necesita el hash que ya venÃ­a en el cuerpo local.
+         */
+        fun normalizarPublicacionPrivada(
+            body: JsonObject,
+            respuesta: JsonObject
+        ): JsonObject {
+            check(respuesta.get("published")?.asBoolean == true) {
+                "La red no confirmÃ³ la publicaciÃ³n de la transacciÃ³n privada"
+            }
+            val hashConstruido = body.get("tx_hash")?.asString.orEmpty()
+            check(hashConstruido.isNotBlank()) {
+                "La transacciÃ³n privada construida no tiene tx_hash"
+            }
+            val hashNativo = respuesta.get("hash")?.asString.orEmpty()
+            check(hashNativo.isBlank() || hashNativo == hashConstruido) {
+                "La red devolviÃ³ un hash distinto para la transacciÃ³n privada"
+            }
+            return respuesta.deepCopy().apply {
+                addProperty("hash", hashConstruido)
+            }
+        }
     }
 
     private fun sinNodoCompleto(que: String): Nothing = throw UnsupportedOperationException(

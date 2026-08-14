@@ -13,7 +13,35 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import javax.inject.Inject
+
+internal data class ZokaPaymentQr(
+    val address: String,
+    val amount: String?
+)
+
+/** Parses the opaque format emitted by Receive: `zoka:address?amount=...`. */
+internal fun parseZokaPaymentQr(qrData: String): ZokaPaymentQr {
+    require(qrData.startsWith(Constants.ZOKA_QR_SCHEME)) { "Unsupported QR scheme" }
+    val payload = qrData.removePrefix(Constants.ZOKA_QR_SCHEME)
+    val address = payload.substringBefore('?').trim()
+    require(address.isNotBlank()) { "Missing recipient address" }
+    val query = payload.substringAfter('?', missingDelimiterValue = "")
+    val amount = query
+        .split('&')
+        .asSequence()
+        .mapNotNull { pair ->
+            val key = pair.substringBefore('=', missingDelimiterValue = pair)
+            if (key != Constants.QR_PARAM_AMOUNT) return@mapNotNull null
+            pair.substringAfter('=', missingDelimiterValue = "")
+        }
+        .firstOrNull()
+        ?.let { URLDecoder.decode(it, StandardCharsets.UTF_8.name()) }
+        ?.takeIf { it.isNotBlank() }
+    return ZokaPaymentQr(address, amount)
+}
 
 @HiltViewModel
 class SendViewModel @Inject constructor(
@@ -47,7 +75,14 @@ class SendViewModel @Inject constructor(
                 val activeAccount = accountManager.activeAccount.value
                 val address = activeAccount?.address ?: secureStorage.getActiveWallet()
                 
-                address?.let { loadBalance(it) }
+                if (address == null) {
+                    _uiState.update { it.copy(
+                        isLoading = false,
+                        balanceError = "No active wallet is available"
+                    ) }
+                } else {
+                    loadBalance(address)
+                }
 
                 // Start USD price updates
                 priceRepository.getPrice("zka").collect { result ->
@@ -63,8 +98,11 @@ class SendViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
-                // Fail gracefully if price service is unavailable
-                _uiState.update { it.copy(isLoading = false) }
+                _uiState.update { it.copy(
+                    isLoading = false,
+                    isBalanceVerified = false,
+                    balanceError = e.message ?: "Could not verify the current balance"
+                ) }
             }
         }
     }
@@ -73,6 +111,7 @@ class SendViewModel @Inject constructor(
         val matchingAccount = accountManager.activeAccount.value
             ?.takeIf { it.address == address }
         val scanKey = matchingAccount?.let { accountManager.getScanKeyForAccount(it.id) }
+            ?: secureStorage.getMnemonic("default_wallet")?.let(walletManager::getScanKey)
         val restoreHeight = matchingAccount?.restoreHeight ?: 0L
         when (val balRes = zokaRepository.getAddressBalance(address, scanKey, restoreHeight)) {
             is com.zoka.zkapriv.core.util.Result.Success -> {
@@ -84,10 +123,28 @@ class SendViewModel @Inject constructor(
                 // same UTXOs and get rejected by the node).
                 _uiState.update { it.copy(
                     availableBalance = zokaRepository.formatAtoms(info.availableAtoms),
+                    isBalanceIncomplete = info.isIncomplete,
+                    missingTxCount = info.missingTxCount,
+                    scannedHeight = info.scannedHeight,
+                    isBalanceVerified = info.isVerified,
+                    isValidAmount = isAmountSpendable(
+                        amount = it.amount,
+                        fee = it.estimatedFee,
+                        availableBalance = zokaRepository.formatAtoms(info.availableAtoms),
+                        balanceVerified = info.isVerified
+                    ),
+                    balanceError = info.verificationIssue,
                     isLoading = false
                 ) }
             }
-            else -> { /* ignore errors for now */ }
+            is com.zoka.zkapriv.core.util.Result.Error -> {
+                _uiState.update { it.copy(
+                    isBalanceVerified = false,
+                    balanceError = balRes.exception.message ?: "Could not verify the current balance",
+                    isLoading = false
+                ) }
+            }
+            else -> { /* no loading result is emitted by this repository */ }
         }
     }
 
@@ -107,7 +164,12 @@ class SendViewModel @Inject constructor(
                 _uiState.update { it.copy(
                     usdAmount = amount,
                     amount = if (masAmount > BigDecimal.ZERO) masAmount.toPlainString() else "",
-                    isValidAmount = masAmount > BigDecimal.ZERO && masAmount <= it.availableBalance.toBigDecimal()
+                    isValidAmount = isAmountSpendable(
+                        amount = masAmount.toPlainString(),
+                        fee = it.estimatedFee,
+                        availableBalance = it.availableBalance,
+                        balanceVerified = it.isBalanceVerified
+                    )
                 ) }
                 
                 if (masAmount > BigDecimal.ZERO) {
@@ -119,7 +181,12 @@ class SendViewModel @Inject constructor(
                 _uiState.update { it.copy(
                     amount = amount,
                     usdAmount = calculateUsdAmount(amount, it.usdPrice),
-                    isValidAmount = numericAmount <= it.availableBalance.toBigDecimal()
+                    isValidAmount = isAmountSpendable(
+                        amount = numericAmount.toPlainString(),
+                        fee = it.estimatedFee,
+                        availableBalance = it.availableBalance,
+                        balanceVerified = it.isBalanceVerified
+                    )
                 ) }
                 
                 if (numericAmount > BigDecimal.ZERO) {
@@ -139,21 +206,17 @@ class SendViewModel @Inject constructor(
         _uiState.update { it.copy(
             isUsdMode = !it.isUsdMode,
             amount = "",
-            usdAmount = ""
+            usdAmount = "",
+            isValidAmount = false
         ) }
     }
     
     fun setMaxAmount() {
+        if (!_uiState.value.isBalanceVerified) return
         val availableBalance = _uiState.value.availableBalance.toBigDecimalOrNull() ?: BigDecimal.ZERO
         
-        // Base fee for simple transfer: 0.01 ZKA
-        // Additional safety margin for potential account creation: 0.01 ZKA
-        val baseFee = BigDecimal("0.01")
-        val safetyMargin = BigDecimal("0.01")
-        val totalReserve = baseFee + safetyMargin
-        
-        // Calculate max amount (balance - fees - safety margin)
-        val maxAmount = (availableBalance - totalReserve).max(BigDecimal.ZERO)
+        val fee = _uiState.value.estimatedFee.toBigDecimalOrNull() ?: return
+        val maxAmount = (availableBalance - fee).max(BigDecimal.ZERO)
         
         // If in USD mode, convert to USD
         if (_uiState.value.isUsdMode) {
@@ -177,22 +240,45 @@ class SendViewModel @Inject constructor(
                 is Result.Success -> {
                     val feeAtoms = feeResult.data.toBigDecimalOrNull() ?: BigDecimal.ZERO
                     val feeZka = feeAtoms.divide(BigDecimal.valueOf(Constants.ATOMS_PER_ZKA))
-                    _uiState.update { it.copy(estimatedFee = feeZka.stripTrailingZeros().toPlainString()) }
+                    _uiState.update {
+                        val fee = feeZka.stripTrailingZeros().toPlainString()
+                        it.copy(
+                            estimatedFee = fee,
+                            isValidAmount = isAmountSpendable(
+                                it.amount,
+                                fee,
+                                it.availableBalance,
+                                it.isBalanceVerified
+                            )
+                        )
+                    }
                 }
                 else -> {
                     // Use fallback fee
-                    _uiState.update { it.copy(estimatedFee = "0.1") }
+                    _uiState.update {
+                        it.copy(
+                            estimatedFee = "0.1",
+                            isValidAmount = isAmountSpendable(
+                                it.amount,
+                                "0.1",
+                                it.availableBalance,
+                                it.isBalanceVerified
+                            )
+                        )
+                    }
                 }
             }
         }
     }
 
     fun requestAuthentication() {
+        if (!canSubmit(_uiState.value)) return
         _uiState.update { it.copy(showAuthDialog = true) }
     }
     
     fun onAuthenticationSuccess() {
         _uiState.update { it.copy(showAuthDialog = false) }
+        if (!canSubmit(_uiState.value)) return
         sendTransaction()
     }
     
@@ -202,10 +288,19 @@ class SendViewModel @Inject constructor(
     
     private fun sendTransaction() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
+            if (!canSubmit(_uiState.value)) return@launch
+            _uiState.update { it.copy(isLoading = true, error = null, showFailureScreen = false) }
             
             val activeAccount = accountManager.activeAccount.value
-            val fromAddress = activeAccount?.address ?: secureStorage.getActiveWallet() ?: return@launch
+            val fromAddress = activeAccount?.address ?: secureStorage.getActiveWallet()
+            if (fromAddress == null) {
+                _uiState.update { it.copy(
+                    error = "No active wallet is available",
+                    isLoading = false,
+                    showFailureScreen = false
+                ) }
+                return@launch
+            }
             
             // Get scan key from AccountManager
             val scanKeyBytes = if (activeAccount != null) {
@@ -224,7 +319,7 @@ class SendViewModel @Inject constructor(
                 _uiState.update { it.copy(
                     error = "Could not retrieve scan key",
                     isLoading = false,
-                    showFailureScreen = true
+                    showFailureScreen = false
                 ) }
                 return@launch
             }
@@ -259,7 +354,7 @@ class SendViewModel @Inject constructor(
                     _uiState.update { it.copy(
                         error = sendRes.exception.message,
                         isLoading = false,
-                        showFailureScreen = true
+                        showFailureScreen = false
                     ) }
                 }
                 else -> { /* ignore */ }
@@ -270,16 +365,9 @@ class SendViewModel @Inject constructor(
     fun parseQrCode(qrData: String) {
         try {
             if (qrData.startsWith(Constants.ZOKA_QR_SCHEME)) {
-                // Parse zoka:address?amount=... format
-                val uri = android.net.Uri.parse(qrData)
-                val address = uri.schemeSpecificPart
-                val amount = uri.getQueryParameter(Constants.QR_PARAM_AMOUNT)
-                
-                _uiState.update { it.copy(
-                    recipientAddress = address,
-                    amount = amount ?: it.amount,
-                    isValidAddress = zokaRepository.validateZokaAddress(address)
-                ) }
+                val payment = parseZokaPaymentQr(qrData)
+                updateAddress(payment.address)
+                payment.amount?.let(::updateAmount)
             } else {
                 // Treat as plain address
                 val address = qrData.trim()
@@ -298,8 +386,33 @@ class SendViewModel @Inject constructor(
     fun dismissResultScreen() {
         _uiState.update { it.copy(
             showSuccessScreen = false,
-            showFailureScreen = false
+            showFailureScreen = false,
+            error = null
         ) }
+    }
+
+    private fun canSubmit(state: SendState): Boolean =
+        state.isBalanceVerified &&
+            state.isValidAddress &&
+            state.recipientAddress.isNotBlank() &&
+            isAmountSpendable(
+                state.amount,
+                state.estimatedFee,
+                state.availableBalance,
+                state.isBalanceVerified
+            )
+
+    private fun isAmountSpendable(
+        amount: String,
+        fee: String,
+        availableBalance: String,
+        balanceVerified: Boolean
+    ): Boolean {
+        if (!balanceVerified) return false
+        val value = amount.toBigDecimalOrNull() ?: return false
+        val feeValue = fee.toBigDecimalOrNull() ?: return false
+        val available = availableBalance.toBigDecimalOrNull() ?: return false
+        return value > BigDecimal.ZERO && feeValue >= BigDecimal.ZERO && value + feeValue <= available
     }
 
     private fun calculateUsdAmount(amount: String, usdPrice: Double): String {
@@ -332,8 +445,13 @@ data class SendState(
     val usdPrice: Double = 0.0,
     val recipientAddress: String = "",
     val availableBalance: String = "0",
+    val isBalanceIncomplete: Boolean = false,
+    val isBalanceVerified: Boolean = false,
+    val missingTxCount: Int = 0,
+    val scannedHeight: Long = 0,
+    val balanceError: String? = null,
     val estimatedFee: String = "0.1",
-    val isValidAmount: Boolean = true,
+    val isValidAmount: Boolean = false,
     val isValidAddress: Boolean = true,
     val isLoading: Boolean = true,
     val isSuccess: Boolean = false,

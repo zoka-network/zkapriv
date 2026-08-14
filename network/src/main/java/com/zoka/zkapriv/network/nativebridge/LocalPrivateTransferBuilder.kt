@@ -27,6 +27,7 @@ class LocalPrivateTransferBuilder @Inject constructor(
     private val provingMutex = Mutex()
     private val chainScanMutex = Mutex()
     private val chainScanner = IncrementalPrivateChainScanner(
+        blockDigestsRange = api::getBlockDigestsRange,
         rawBlocksRange = api::getRawBlocksRange,
         privateTransactionRaw = api::getPrivateTransactionRaw,
         snapshotStore = EncryptedPrivateChainSnapshotStore(secureStorage)
@@ -59,9 +60,11 @@ class LocalPrivateTransferBuilder @Inject constructor(
         privateProofVersion: Int = 1,
         privateProofProfile: String = "private_tx"
     ): BuiltTransfer {
-        val height = api.getChainHeight().height
-        val chainState = chainScanMutex.withLock {
-            chainScanner.refresh(from, height)
+        val chainState = withContext(Dispatchers.IO) {
+            val height = api.getChainHeight().height
+            chainScanMutex.withLock {
+                chainScanner.refresh(from, height)
+            }
         }
         val pending = pendingBodies.mapNotNull { raw ->
             runCatching { gson.fromJson(raw, JsonObject::class.java) }.getOrNull()

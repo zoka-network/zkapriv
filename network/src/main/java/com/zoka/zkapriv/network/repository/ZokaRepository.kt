@@ -2,6 +2,7 @@ package com.zoka.zkapriv.network.repository
 
 import android.util.Log
 import com.google.gson.Gson
+import com.google.gson.JsonObject
 import com.google.gson.reflect.TypeToken
 import com.zoka.zkapriv.core.model.Token
 import com.zoka.zkapriv.core.model.Transaction
@@ -16,26 +17,66 @@ import com.zoka.zkapriv.network.model.ZokaTransactionRequest
 import com.zoka.zkapriv.network.nativebridge.LocalProverClient
 import com.zoka.zkapriv.security.storage.SecureStorage
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import com.zoka.zkapriv.core.util.Ristretto255
 import com.zoka.zkapriv.network.model.ZokaPrivateOutputModel
 import com.zoka.zkapriv.network.model.ZokaPrivateTransactionResponse
+import com.zoka.zkapriv.network.model.requireCompleteRange
+import com.zoka.zkapriv.security.storage.PrivateTxOutboxRecord
 import org.bouncycastle.crypto.digests.Blake3Digest
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
 import org.bouncycastle.crypto.signers.Ed25519Signer
 import java.math.BigDecimal
 import java.math.BigInteger
+import java.nio.ByteBuffer
 import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 import retrofit2.HttpException
+
+internal fun privateSendRequestKey(
+    from: String,
+    to: String,
+    amountAtoms: Long,
+    feeAtoms: Long
+): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    digest.update("zoka-private-send-request-v1".toByteArray(Charsets.UTF_8))
+    listOf(from, to, amountAtoms.toString(), feeAtoms.toString()).forEach { field ->
+        val bytes = field.toByteArray(Charsets.UTF_8)
+        digest.update(ByteBuffer.allocate(Int.SIZE_BYTES).putInt(bytes.size).array())
+        digest.update(bytes)
+    }
+    return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+}
+
+internal fun matchingPrivateTxOutbox(
+    records: List<PrivateTxOutboxRecord>,
+    requestKey: String
+): PrivateTxOutboxRecord? {
+    val matches = records.filter { it.requestKey == requestKey }
+    check(matches.size <= 1) {
+        "Hay varias transacciones pendientes para la misma solicitud privada"
+    }
+    return matches.singleOrNull()
+}
+
+internal fun ZokaRepository.BalanceInfo.isVerifiedAtTip(
+    chainHeight: Long,
+    chainTipHash: String
+): Boolean =
+    isVerified &&
+        scannedHeight == chainHeight &&
+        verifiedTipHash.isNotBlank() &&
+        verifiedTipHash == chainTipHash
 
 @Singleton
 class ZokaRepository @Inject constructor(
@@ -73,8 +114,8 @@ class ZokaRepository @Inject constructor(
         }
     }
 
-    // On-device private transaction builder (Rust JNI engine). Staging builds
-    // select it explicitly; release stays remote until coordinated rollout.
+    // On-device private transaction builder (Rust JNI engine). Every build
+    // variant uses it, so the recovery seed never leaves the phone.
     private val localTransferBuilder by lazy {
         com.zoka.zkapriv.network.nativebridge.LocalPrivateTransferBuilder(
             zokaNodeApi,
@@ -87,6 +128,9 @@ class ZokaRepository @Inject constructor(
     // Balance cache: prevents multiple ViewModels from scanning simultaneously
     private val balanceCache = mutableMapOf<String, Pair<BalanceInfo, Long>>()
     private val scanMutex = Mutex()
+    // Covers pending replay, local proving, durable outbox/reservation writes and
+    // publication. Two taps/coroutines must never build from the same note set.
+    private val sendMutex = Mutex()
     // Private tx cache: immutable on-chain data, safe to cache for the app session.
     // ConcurrentHashMap-backed because batched parallel fetches in scanFullBalance
     // write to these from multiple coroutines at once.
@@ -103,14 +147,16 @@ class ZokaRepository @Inject constructor(
         private const val BALANCE_CACHE_TTL_MS = 30_000L
         private const val BALANCE_SCAN_SCHEMA_VERSION = 1
         private const val MAX_BALANCE_SCAN_SNAPSHOT_CHARS = 2 * 1024 * 1024
-        private const val FULL_SCAN_CACHE_TTL_MS = 5 * 60 * 1_000L
-        private const val PENDING_FULL_SCAN_CACHE_TTL_MS = 10_000L
+        private const val SAVED_BALANCE_VERIFICATION_ISSUE =
+            "Showing a saved balance. Sending stays disabled until the P2P scan verifies the current chain tip."
         // Only flag a tx FAILED once NO node has its body and it is in no
         // block for this long — generous so a valid send waiting for a miner
         // (or only on the peer node) is never falsely marked failed.
         private const val TX_FAILED_AFTER_MIN = 6 * 60L
         private const val PERSISTENT_CACHE_TTL_MS = 30 * 60 * 1_000L
         private const val BATCH_DELAY_MS = 80L
+        /** Cada cuantos bloques se anota el avance del escaneo. */
+        private const val BLOQUES_ENTRE_PUNTOS_DE_CONTROL = 1_000L
         private const val PRIVATE_TX_PHASE_DELAY_MS = 2_000L
         private const val PRIVATE_TX_DELAY_MS = 350L
         private val PRIVATE_TX_RETRY_DELAYS_MS = longArrayOf(8_000L, 20_000L)
@@ -120,23 +166,6 @@ class ZokaRepository @Inject constructor(
         // rate limiter.
         private const val PRIVATE_TX_FETCH_BATCH_SIZE = 6
         private const val PRIVATE_TX_BATCH_DELAY_MS = 150L
-        // Cuanto se espera el cuerpo de una transaccion privada.
-        //
-        // Casi siempre sale del cache que dejaron los bloques ya bajados y
-        // vuelve al instante. Los 45 segundos son para el caso raro en que hay
-        // que pedirselo a un par por Tor; con los 10 originales, pensados para
-        // un servidor HTTP cercano, ese caso fallaba siempre.
-        private const val PRIVATE_TX_FETCH_TIMEOUT_MS = 45_000L
-        // Cuanto se le da a un rango de bloques, por bloque pedido.
-        //
-        // Antes eran 20 segundos fijos, medidos contra un servidor HTTP que
-        // devolvia el rango entero en una respuesta. Ahora cada bloque es un
-        // pedido punto a punto que viaja por Tor, asi que el costo crece con el
-        // tamaño del rango y un techo fijo lo unico que garantiza es que el
-        // escaneo falle siempre.
-        private const val RAW_BLOCK_TIMEOUT_PER_BLOCK_MS = 2_000L
-        // Piso para rangos chicos: armar el circuito ya cuesta esto.
-        private const val RAW_BLOCK_RANGE_TIMEOUT_FLOOR_MS = 30_000L
     }
 
     data class BalanceInfo(
@@ -144,6 +173,16 @@ class ZokaRepository @Inject constructor(
         val immatureAtoms: Long,
         val missingTxCount: Int = 0,
         val scannedHeight: Long = 0,
+        /**
+         * True only when this process has just completed the full private scan
+         * that produced this value. Persistent/cache/coinbase fallbacks stay
+         * fail-closed because a zero missing count alone is not verification.
+         */
+        val isVerified: Boolean = false,
+        /** Hash of [scannedHeight] used to reject a same-height reorganization. */
+        val verifiedTipHash: String = "",
+        /** User-facing reason why this value is not safe to spend yet. */
+        val verificationIssue: String? = null,
         /**
          * Atoms locally reserved by in-flight outbound transfers (sends
          * the user has broadcast but that the chain has not yet confirmed).
@@ -167,15 +206,18 @@ class ZokaRepository @Inject constructor(
         address: String,
         scanKey: ByteArray? = null,
         restoreHeight: Long = 0
+    ): Result<BalanceInfo> = withContext(Dispatchers.IO) {
+        getAddressBalanceOnIo(address, scanKey, restoreHeight)
+    }
+
+    private suspend fun getAddressBalanceOnIo(
+        address: String,
+        scanKey: ByteArray?,
+        restoreHeight: Long
     ): Result<BalanceInfo> {
         return try {
+            restorePendingReservationsFromOutbox(address)
             val cacheKey = if (scanKey != null) "${address}_full" else address
-            val hasPendingOutbound = rpcSettings.readPendingSends(address).isNotEmpty()
-            val cacheTtlMs = when {
-                scanKey != null && hasPendingOutbound -> PENDING_FULL_SCAN_CACHE_TTL_MS
-                scanKey != null -> FULL_SCAN_CACHE_TTL_MS
-                else -> BALANCE_CACHE_TTL_MS
-            }
             // Hydrate in-memory cache from persistent storage on first access of this session
             if (scanKey != null && !balanceCache.containsKey(cacheKey)) {
                 rpcSettings.readBalanceCache(address)?.let { saved ->
@@ -184,24 +226,63 @@ class ZokaRepository @Inject constructor(
                             matureAtoms = saved.matureAtoms,
                             immatureAtoms = saved.immatureAtoms,
                             missingTxCount = saved.missingTxCount,
-                            scannedHeight = saved.scannedHeight
+                            scannedHeight = saved.scannedHeight,
+                            verificationIssue = SAVED_BALANCE_VERIFICATION_ISSUE
                         ),
                         saved.savedAtMillis
                     )
                 }
             }
             val cached = balanceCache[cacheKey]
-            if (cached != null && System.currentTimeMillis() - cached.second < cacheTtlMs) {
+            // Coinbase-only reads are informational and may use their short
+            // cache. A full private balance is never called current merely
+            // because five minutes have not elapsed: first compare it with the
+            // live P2P tip inside the scan mutex below.
+            if (
+                scanKey == null && cached != null &&
+                System.currentTimeMillis() - cached.second < BALANCE_CACHE_TTL_MS
+            ) {
                 return Result.Success(cached.first.withReconciledPendings(address))
             }
             scanMutex.withLock {
+                val height = zokaNodeApi.getChainHeight().height
                 val cachedNow = balanceCache[cacheKey]
-                if (cachedNow != null && System.currentTimeMillis() - cachedNow.second < cacheTtlMs) {
+                if (scanKey != null && cachedNow?.first?.isVerified == true) {
+                    val currentTipHash = fetchBlockDigestsRange(height, height)
+                        .requireCompleteRange(height, height)
+                        .single()
+                        .header
+                        ?.hash
+                        .orEmpty()
+                    if (cachedNow.first.isVerifiedAtTip(height, currentTipHash)) {
+                        reconcilePendingSendsWithNode(address)
+                        return@withLock Result.Success(
+                            cachedNow.first.withReconciledPendings(address)
+                        )
+                    }
+                }
+                if (
+                    scanKey == null && cachedNow != null &&
+                    System.currentTimeMillis() - cachedNow.second < BALANCE_CACHE_TTL_MS
+                ) {
                     return@withLock Result.Success(cachedNow.first.withReconciledPendings(address))
                 }
-                val height = zokaNodeApi.getChainHeight().height
                 val rawInfo = if (scanKey != null) {
-                    scanFullBalance(address, scanKey, height, restoreHeight)
+                    val scanned = scanFullBalance(address, scanKey, height, restoreHeight)
+                    val revalidated = revalidateFreshFullScan(scanned.balance)
+                    if (!revalidated.tipIsCurrent) {
+                        // The confirmations belong to a tip that is no longer
+                        // current (or could not be proven current). Never let
+                        // them delete a reservation/outbox. Also avoid caching
+                        // this branch so the next refresh retries the scan.
+                        confirmedPrivateTxHashes.clear()
+                        return@withLock Result.Success(
+                            revalidated.balance.withPendingReservationsOnly(address)
+                        )
+                    }
+                    confirmedPrivateTxHashes.clear()
+                    confirmedPrivateTxHashes.addAll(scanned.confirmedHashes)
+                    revalidated.balance
                 } else {
                     scanCoinbaseBalance(address, height)
                 }
@@ -233,7 +314,8 @@ class ZokaRepository @Inject constructor(
                             matureAtoms = saved.matureAtoms,
                             immatureAtoms = saved.immatureAtoms,
                             missingTxCount = saved.missingTxCount,
-                            scannedHeight = saved.scannedHeight
+                            scannedHeight = saved.scannedHeight,
+                            verificationIssue = SAVED_BALANCE_VERIFICATION_ISSUE
                         ).withReconciledPendings(address)
                     )
                 }
@@ -246,57 +328,56 @@ class ZokaRepository @Inject constructor(
      * Overlay locally-tracked pending outbound sends on top of a freshly
      * scanned BalanceInfo:
      *
-     *   - Drop pending entries older than 30 min (assumed dropped by every
-     *     mempool by now → reserved atoms revert to available).
-     *   - For each surviving pending, if the next balance scan saw any of
-     *     the tx's input nullifiers as spent on chain, the tx confirmed
-     *     and the reservation is no longer needed (chain already reflects
-     *     the deduction). We approximate that by checking whether the tx
-     *     body lives in the node's `priv_tx` storage AND its hash is in
-     *     `confirmedPrivateTxHashes` (txs we found in a block during the
-     *     scan). Cheap heuristic: if the chain scanned-height advanced
-     *     past the send's creation time and the tx hash is in the
-     *     confirmed set, it's done.
+     *   - Recreate a missing reservation from its durable encrypted outbox.
+     *   - Remove a reservation only when the latest chain scan contains the
+     *     transaction hash. Wall-clock age is never confirmation evidence.
      *   - Sum the remaining reservations into `pendingOutAtoms` so the
      *     UI can show Available = Mature - PendingOut.
      */
     private fun BalanceInfo.withReconciledPendings(address: String): BalanceInfo {
+        restorePendingReservationsFromOutbox(address)
         val survivors = rpcSettings.expirePendingSends(address)
         if (survivors.isEmpty()) return this
-        // A pending entry is considered "confirmed" once the matching tx
-        // body is no longer being chased by the next scan. We use the
-        // confirmed-hashes set produced by the most recent full scan
-        // (populated below in scanFullBalance). For now, drop any pending
-        // whose hash appears in the in-session `confirmedPrivateTxHashes`
-        // cache; otherwise keep it as still-pending.
         var pendingOut = 0L
         for (p in survivors) {
             if (confirmedPrivateTxHashes.contains(p.hash)) {
+                // Remove the replay body first. A crash between these commits
+                // can only leave an overly conservative reservation; the
+                // opposite order could resurrect a confirmed outbox.
+                secureStorage.removePrivateTxOutbox(p.hash)
                 rpcSettings.removePendingSend(address, p.hash)
             } else {
-                pendingOut += p.reservedAtoms
+                pendingOut = pendingOut.saturatingAdd(p.reservedAtoms)
             }
         }
         return copy(pendingOutAtoms = pendingOut)
     }
 
     /**
-     * Keep "pending out" reservations in step with each tx's real lifecycle
-     * instead of a blind 30-min timer. Run after a scan so the confirmed set
-     * is fresh. For every reserved send:
+     * Conservative overlay used when a fresh scan could not revalidate its
+     * tip. It reflects every reservation but deliberately ignores the scan's
+     * confirmation set, so no pending record or replay body can be deleted.
+     */
+    private fun BalanceInfo.withPendingReservationsOnly(address: String): BalanceInfo {
+        val pendingOut = rpcSettings.expirePendingSends(address)
+            .fold(0L) { total, pending -> total.saturatingAdd(pending.reservedAtoms) }
+        return copy(pendingOutAtoms = pendingOut)
+    }
+
+    /**
+     * Keep "pending out" reservations in step with each tx's real lifecycle.
+     * Run after a scan so the confirmed set is fresh. For every reserved send:
      *   - if the scan already saw it confirmed in a block, drop the
      *     reservation (the spend is now reflected in `mature`);
-     *   - else, if the node still knows the tx (waiting in a mempool / stored),
-     *     refresh its timestamp so the TTL can't drop a tx that is merely
-     *     waiting for a miner — this was the cause of the balance "snapping
-     *     back to full" while a verified tx sat unmined.
-     * A genuinely dropped tx (node 404 + never confirmed) is left to the TTL
-     * fallback in [withReconciledPendings], so a single-node propagation gap
-     * never releases funds early.
+     *   - if the node does not currently know it, replay the exact encrypted
+     *     outbox body. Failure leaves both body and reservation untouched.
      */
     private suspend fun reconcilePendingSendsWithNode(address: String) {
+        val outboxByHash = restorePendingReservationsFromOutbox(address)
+            .associateBy { it.hash }
         for (p in rpcSettings.readPendingSends(address)) {
             if (confirmedPrivateTxHashes.contains(p.hash)) {
+                secureStorage.removePrivateTxOutbox(p.hash)
                 rpcSettings.removePendingSend(address, p.hash)
                 continue
             }
@@ -306,20 +387,67 @@ class ZokaRepository @Inject constructor(
             } catch (_: Exception) {
                 false
             }
-            if (nodeKnowsTx) {
-                // Refresh the reservation's timestamp so the TTL window
-                // restarts while the tx is still alive on the node.
-                rpcSettings.recordPendingSend(address, p.hash, p.reservedAtoms)
+            if (!nodeKnowsTx) {
+                outboxByHash[p.hash]?.let { record ->
+                    runCatching { publishOutboxRecord(record) }
+                        .onFailure { error ->
+                            Log.w(
+                                "ZokaRepository",
+                                "Could not replay private outbox ${record.hash}: ${error.message}"
+                            )
+                        }
+                }
             }
         }
     }
 
     /**
+     * The encrypted outbox is authoritative because it is committed before the
+     * plain RPC preference. Rebuild any missing/mismatched reservation after a
+     * process death, then return validated records for replay/build input.
+     */
+    private fun restorePendingReservationsFromOutbox(
+        address: String
+    ): List<PrivateTxOutboxRecord> {
+        val records = secureStorage.readPrivateTxOutbox(address)
+        if (records.isEmpty()) return emptyList()
+        val pendingByHash = rpcSettings.readPendingSends(address).associateBy { it.hash }
+        for (record in records) {
+            parseOutboxBody(record)
+            val pending = pendingByHash[record.hash]
+            if (pending == null || pending.reservedAtoms != record.reservedAtoms) {
+                rpcSettings.recordPendingSend(address, record.hash, record.reservedAtoms)
+            }
+        }
+        return records
+    }
+
+    private fun parseOutboxBody(record: PrivateTxOutboxRecord): JsonObject {
+        val body = gson.fromJson(record.bodyJson, JsonObject::class.java)
+            ?: throw IllegalStateException("Encrypted outbox ${record.hash} has no body")
+        check(body.get("tx_hash")?.asString == record.hash) {
+            "Encrypted outbox body ${record.hash} identifies a different transaction"
+        }
+        return body
+    }
+
+    private suspend fun publishOutboxRecord(record: PrivateTxOutboxRecord): String {
+        val submitted = zokaNodeApi.submitPrivateTx(parseOutboxBody(record))
+        val submittedHash = submitted.get("hash")?.asString.orEmpty()
+        check(submittedHash == record.hash) {
+            "Node returned a different hash for encrypted-outbox private transaction"
+        }
+        return record.hash
+    }
+
+    /**
      * Hashes of private transactions the most recent scan observed in a
      * block (i.e. confirmed). Drives the pending-send reconciliation in
-     * [withReconciledPendings]. Cleared at session start; safe to grow.
+     * [withReconciledPendings]. Rebuilt at the start of every full scan so
+     * orphaned hashes from a reorganized branch cannot survive in memory.
      */
-    private val confirmedPrivateTxHashes = mutableSetOf<String>()
+    private val confirmedPrivateTxHashes =
+        java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /**
      * Cheap chain-height check (no block/tx fetching) — used to decide
@@ -334,13 +462,14 @@ class ZokaRepository @Inject constructor(
         null
     }
 
-    fun cachedBalanceFor(address: String): BalanceInfo? {
-        val saved = rpcSettings.readBalanceCache(address) ?: return null
-        return BalanceInfo(
+    suspend fun cachedBalanceFor(address: String): BalanceInfo? = withContext(Dispatchers.IO) {
+        val saved = rpcSettings.readBalanceCache(address) ?: return@withContext null
+        BalanceInfo(
             matureAtoms = saved.matureAtoms,
             immatureAtoms = saved.immatureAtoms,
             missingTxCount = saved.missingTxCount,
-            scannedHeight = saved.scannedHeight
+            scannedHeight = saved.scannedHeight,
+            verificationIssue = SAVED_BALANCE_VERIFICATION_ISSUE
         ).withReconciledPendings(address)
     }
 
@@ -355,27 +484,34 @@ class ZokaRepository @Inject constructor(
         missingPrivateTxCache.clear()
     }
 
-    private suspend fun fetchRawBlocksRange(from: Long, to: Long) =
-        withTimeout(rawBlockRangeTimeoutMs(from, to)) {
-            zokaNodeApi.getRawBlocksRange(from, to)
-        }
-
-    /** Tiempo que se le da a un rango, proporcional a cuantos bloques trae. */
-    private fun rawBlockRangeTimeoutMs(from: Long, to: Long): Long {
-        val bloques = (to - from + 1L).coerceAtLeast(1L)
-        return (bloques * RAW_BLOCK_TIMEOUT_PER_BLOCK_MS)
-            .coerceAtLeast(RAW_BLOCK_RANGE_TIMEOUT_FLOOR_MS)
-    }
+    /**
+     * Trae el tramo en forma de resúmenes.
+     *
+     * Todo lo que el escaneo mira —el coinbase, los hashes de transacciones
+     * privadas, los nulificadores— viaja en un resumen. Lo que no viaja es la
+     * prueba de rango del coinbase, que pesa más que todo lo demás junto y solo
+     * hace falta para gastar la nota, no para contarla. Quien vaya a gastar
+     * (LocalPrivateTransferBuilder) pide el bloque entero solo si reconoce un
+     * coinbase propio.
+     */
+    private suspend fun fetchBlockDigestsRange(from: Long, to: Long) =
+        zokaNodeApi.getBlockDigestsRange(from, to)
 
     private suspend fun scanCoinbaseBalance(address: String, chainHeight: Long): BalanceInfo {
         var matureAtoms = 0L
         var immatureAtoms = 0L
         var from = 1L
+        var previousHash = ""
         while (from <= chainHeight) {
             val to = minOf(from + RAW_BLOCK_SCAN_BATCH_SIZE - 1, chainHeight)
-            val response = fetchRawBlocksRange(from, to)
+            val response = fetchBlockDigestsRange(from, to)
+            val blocks = response.requireCompleteRange(
+                from,
+                to,
+                previousHash.takeIf(String::isNotBlank)
+            )
             delay(BATCH_DELAY_MS)
-            response.blocks.forEach { block ->
+            blocks.forEach { block ->
                 // Coinbase tx is always at index 0 with sender == COINBASE_SENDER
                 val coinbaseTx = block.transactions.firstOrNull()
                 if (coinbaseTx != null && coinbaseTx.receiver == address && coinbaseTx.amount > 0) {
@@ -390,9 +526,16 @@ class ZokaRepository @Inject constructor(
                     }
                 }
             }
+            previousHash = blocks.last().header?.hash.orEmpty()
             from = to + 1
         }
-        return BalanceInfo(matureAtoms, immatureAtoms)
+        return BalanceInfo(
+            matureAtoms = matureAtoms,
+            immatureAtoms = immatureAtoms,
+            scannedHeight = chainHeight,
+            verificationIssue =
+                "The private scan key is unavailable, so this is a coinbase-only balance. Sending is disabled."
+        )
     }
 
     // ── Full UTXO scan (requires scan key) ───────────────────────────────────
@@ -429,6 +572,16 @@ class ZokaRepository @Inject constructor(
         val txTimestamps: Map<String, Long> = emptyMap()
     )
 
+    private data class FullBalanceScanResult(
+        val balance: BalanceInfo,
+        val confirmedHashes: Set<String>
+    )
+
+    private data class FreshTipRevalidation(
+        val balance: BalanceInfo,
+        val tipIsCurrent: Boolean
+    )
+
     private fun readBalanceScanSnapshot(address: String): BalanceScanSnapshot? =
         runCatching {
             val raw = secureStorage.getBalanceScanSnapshot(address) ?: return null
@@ -442,14 +595,66 @@ class ZokaRepository @Inject constructor(
         }.getOrNull()
 
     private fun writeBalanceScanSnapshot(snapshot: BalanceScanSnapshot) {
-        runCatching {
-            val json = gson.toJson(snapshot)
-            if (json.length > MAX_BALANCE_SCAN_SNAPSHOT_CHARS) {
-                // Mejor rehacer el escaneo que guardar algo que no entra.
-                secureStorage.clearBalanceScanSnapshot(snapshot.address)
+        val json = gson.toJson(snapshot)
+        if (json.length > MAX_BALANCE_SCAN_SNAPSHOT_CHARS) {
+            secureStorage.clearBalanceScanSnapshot(snapshot.address)
+            throw IllegalStateException(
+                "El avance del escaneo de saldo supera el límite seguro de persistencia"
+            )
+        }
+        secureStorage.storeBalanceScanSnapshot(snapshot.address, json)
+    }
+
+    /**
+     * A full scan can take minutes over Tor. Re-read both height and digest
+     * after it finishes so a block or same-height reorganization that landed
+     * during the scan cannot turn an obsolete branch into a spendable balance.
+     */
+    private suspend fun revalidateFreshFullScan(
+        balance: BalanceInfo
+    ): FreshTipRevalidation {
+        return try {
+            val finalHeight = zokaNodeApi.getChainHeight().height
+            val finalTipHash = fetchBlockDigestsRange(finalHeight, finalHeight)
+                .requireCompleteRange(finalHeight, finalHeight)
+                .single()
+                .header
+                ?.hash
+                .orEmpty()
+            val tipIsCurrent =
+                balance.scannedHeight == finalHeight &&
+                    balance.verifiedTipHash.isNotBlank() &&
+                    balance.verifiedTipHash == finalTipHash
+            if (tipIsCurrent) {
+                FreshTipRevalidation(
+                    balance = balance.copy(
+                        isVerified = balance.isVerifiedAtTip(finalHeight, finalTipHash)
+                    ),
+                    tipIsCurrent = true
+                )
             } else {
-                secureStorage.storeBalanceScanSnapshot(snapshot.address, json)
+                FreshTipRevalidation(
+                    balance = balance.copy(
+                        isVerified = false,
+                        verificationIssue =
+                            "The P2P chain tip changed while the private balance was being scanned. " +
+                                "Sending is disabled until a new scan verifies the current tip."
+                    ),
+                    tipIsCurrent = false
+                )
             }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            FreshTipRevalidation(
+                balance = balance.copy(
+                    isVerified = false,
+                    verificationIssue =
+                        "The P2P chain tip could not be revalidated after the private balance scan. " +
+                            "Sending is disabled until verification succeeds."
+                ),
+                tipIsCurrent = false
+            )
         }
     }
 
@@ -459,9 +664,13 @@ class ZokaRepository @Inject constructor(
         scanKeyBytes: ByteArray,
         chainHeight: Long,
         restoreHeight: Long = 0
-    ): BalanceInfo {
+    ): FullBalanceScanResult {
         val scanStartedAtMs = System.currentTimeMillis()
         Log.d("ZokaRepository", "scanFullBalance: START chainHeight=$chainHeight restoreHeight=$restoreHeight")
+        // This set describes the current scan only. Keeping entries from a
+        // previous branch would let a reorg release a pending reservation and
+        // delete the only replayable transaction body.
+        confirmedPrivateTxHashes.clear()
         // Derive scan scalar: SHA256(scanKey) as LE mod L
         val scanScalar = Ristretto255.scalarFromSecretBytes(scanKeyBytes)
         // Derive spend key: SHA256("zoka-private-wallet-spend-v1" || 0x1f || scanKey)
@@ -471,6 +680,10 @@ class ZokaRepository @Inject constructor(
 
         val myCoinbases = mutableListOf<CoinbaseEntry>()
         val allPrivateTxHashes = linkedSetOf<String>()
+        // Build confirmations off to the side. If any later scan phase fails,
+        // fallback balance handling must not delete an outbox based on a
+        // partially traversed (or concurrently reorganized) branch.
+        val confirmedInCurrentScan = linkedSetOf<String>()
         // Real on-chain time (ms) of each private tx, taken from its block header,
         // so Recent Activity shows when the tx happened — not when we scanned.
         val txTimestampByHash = mutableMapOf<String, Long>()
@@ -502,8 +715,9 @@ class ZokaRepository @Inject constructor(
         val previa = readBalanceScanSnapshot(address)
         if (previa != null && previa.scannedHeight in desde..chainHeight) {
             val ancla = runCatching {
-                fetchRawBlocksRange(previa.scannedHeight, previa.scannedHeight)
-                    .blocks.singleOrNull()?.header?.hash.orEmpty()
+                fetchBlockDigestsRange(previa.scannedHeight, previa.scannedHeight)
+                    .requireCompleteRange(previa.scannedHeight, previa.scannedHeight)
+                    .single().header?.hash.orEmpty()
             }.getOrDefault("")
             if (ancla.isNotBlank() && ancla == previa.tipHash) {
                 desde = previa.scannedHeight + 1L
@@ -512,7 +726,7 @@ class ZokaRepository @Inject constructor(
                 allPrivateTxHashes.addAll(previa.privateTxHashes)
                 allInputNullifiers.addAll(previa.nullifiers)
                 txTimestampByHash.putAll(previa.txTimestamps)
-                confirmedPrivateTxHashes.addAll(previa.privateTxHashes)
+                confirmedInCurrentScan.addAll(previa.privateTxHashes)
                 Log.d(
                     "ZokaRepository",
                     "scanFullBalance: retomando desde $desde (instantánea en ${previa.scannedHeight})"
@@ -526,12 +740,18 @@ class ZokaRepository @Inject constructor(
             }
         }
 
+        var ultimoGuardado = desde - 1
         var from = desde
         while (from <= chainHeight) {
             val to = minOf(from + RAW_BLOCK_SCAN_BATCH_SIZE - 1, chainHeight)
-            val response = fetchRawBlocksRange(from, to)
+            val response = fetchBlockDigestsRange(from, to)
+            val blocks = response.requireCompleteRange(
+                from,
+                to,
+                anclaHash.takeIf { from > 1 && it.isNotBlank() }
+            )
             delay(BATCH_DELAY_MS)
-            response.blocks.forEach { block ->
+            blocks.forEach { block ->
                 val blockHeight = block.header?.blockHeight ?: 0L
                 val coinbaseTx = block.transactions.firstOrNull()
                 if (coinbaseTx != null && coinbaseTx.receiver == address && coinbaseTx.amount > 0) {
@@ -556,8 +776,45 @@ class ZokaRepository @Inject constructor(
                 // from the reconciliation point of view: it's no longer
                 // in flight. Used by withReconciledPendings() to clear
                 // matching pending-out reservations.
-                confirmedPrivateTxHashes.addAll(block.privateTxHashes)
-                block.header?.hash?.takeIf { it.isNotBlank() }?.let { anclaHash = it }
+                confirmedInCurrentScan.addAll(block.privateTxHashes)
+            }
+
+            // El ancla es el hash del bloque que cierra el tramo, buscado por
+            // altura y no por orden de llegada: nada garantiza que la respuesta
+            // venga ordenada, y anclar en el bloque equivocado haria que la
+            // proxima corrida retome desde un punto que no es.
+            blocks
+                .firstOrNull { it.header?.blockHeight == to }
+                ?.header?.hash
+                ?.takeIf { it.isNotBlank() }
+                ?.let { anclaHash = it }
+
+            // Anotar el avance cada tanto, sin esperar al final.
+            //
+            // La primera corrida son decenas de minutos. Guardar solo al
+            // terminar significa que si la aplicacion se cierra, la pantalla se
+            // apaga o se corta la red a los treinta y nueve minutos, se pierde
+            // todo y hay que empezar de cero -- que es exactamente lo que le
+            // paso a este escaner en la practica. Cada punto de control cuesta
+            // una escritura y salva media hora de trabajo.
+            if (anclaHash.isNotBlank() && (to - ultimoGuardado) >= BLOQUES_ENTRE_PUNTOS_DE_CONTROL) {
+                writeBalanceScanSnapshot(
+                    BalanceScanSnapshot(
+                        address = address,
+                        scannedHeight = to,
+                        tipHash = anclaHash,
+                        coinbases = myCoinbases.toList(),
+                        privateTxHashes = allPrivateTxHashes.toList(),
+                        nullifiers = allInputNullifiers.toList(),
+                        txTimestamps = txTimestampByHash.toMap()
+                    )
+                )
+                ultimoGuardado = to
+                Log.d(
+                    "ZokaRepository",
+                    "scanFullBalance: avance $to/$chainHeight " +
+                        "(${(to - desde + 1) * 100 / (chainHeight - desde + 1).coerceAtLeast(1)}%)"
+                )
             }
             from = to + 1
         }
@@ -565,7 +822,7 @@ class ZokaRepository @Inject constructor(
         // Guardar lo aprendido antes de seguir con las fases que salen a pedir
         // cuerpos de transacciones: si eso falla, el recorrido de bloques -- que
         // es lo caro -- no se pierde.
-        if (anclaHash.isNotBlank() && chainHeight >= desde - 1) {
+        if (anclaHash.isNotBlank() && chainHeight > ultimoGuardado) {
             writeBalanceScanSnapshot(
                 BalanceScanSnapshot(
                     address = address,
@@ -707,11 +964,28 @@ class ZokaRepository @Inject constructor(
 
         val elapsedMs = System.currentTimeMillis() - scanStartedAtMs
         Log.d("ZokaRepository", "scanFullBalance: DONE in ${elapsedMs}ms coinbases=${myCoinbases.size} privateTxs=${allPrivateTxHashes.size} ownedOutputs=${ownedOutputs.size} missingTxs=$missingTxCount mature=$matureAtoms immature=$immatureAtoms")
-        return BalanceInfo(
-            matureAtoms = matureAtoms,
-            immatureAtoms = immatureAtoms,
-            missingTxCount = missingTxCount,
-            scannedHeight = chainHeight
+        return FullBalanceScanResult(
+            balance = BalanceInfo(
+                matureAtoms = matureAtoms,
+                immatureAtoms = immatureAtoms,
+                missingTxCount = missingTxCount,
+                scannedHeight = chainHeight,
+                isVerified = missingTxCount == 0 && anclaHash.isNotBlank(),
+                verifiedTipHash = anclaHash,
+                verificationIssue = if (missingTxCount > 0) {
+                    "$missingTxCount private transaction " +
+                        if (missingTxCount == 1) {
+                            "body is still unavailable from the P2P network."
+                        } else {
+                            "bodies are still unavailable from the P2P network."
+                        }
+                } else if (anclaHash.isBlank()) {
+                    "The P2P scan could not anchor this balance to a chain tip."
+                } else {
+                    null
+                }
+            ),
+            confirmedHashes = confirmedInCurrentScan.toSet()
         )
     }
 
@@ -721,9 +995,8 @@ class ZokaRepository @Inject constructor(
 
         delay(PRIVATE_TX_DELAY_MS)
         return try {
-            withTimeout(PRIVATE_TX_FETCH_TIMEOUT_MS) {
-                zokaNodeApi.getPrivateTransaction(txHash)
-            }.also { privateTxCache[txHash] = it }
+            zokaNodeApi.getPrivateTransaction(txHash)
+                .also { privateTxCache[txHash] = it }
         } catch (e: HttpException) {
             if (e.code() != 429) {
                 if (e.code() == 404) missingPrivateTxCache.add(txHash)
@@ -732,13 +1005,12 @@ class ZokaRepository @Inject constructor(
             }
             retryPrivateTransactionAfterRateLimit(txHash)
         } catch (e: TimeoutCancellationException) {
-            // The shared OkHttp client carries a 120s read timeout sized for
-            // proof generation elsewhere; a single stalled fetch here would
-            // otherwise block this entire concurrent batch for that long.
-            // Treat it like any other transient failure: skip for this scan,
-            // don't permanently mark as missing (only a real 404 does that).
-            Log.w("ZokaRepository", "Timed out fetching $txHash after ${PRIVATE_TX_FETCH_TIMEOUT_MS}ms, skipping")
+            // The JNI call may consume its complete reconnect + P2P budget.
+            // A timeout remains transient: only a real 404 is cached as missing.
+            Log.w("ZokaRepository", "Timed out fetching $txHash, skipping")
             null
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w("ZokaRepository", "Skipping $txHash: ${e.message}")
             null
@@ -750,9 +1022,8 @@ class ZokaRepository @Inject constructor(
             Log.d("ZokaRepository", "429 on $txHash, retrying after ${delayMs}ms")
             delay(delayMs)
             try {
-                return withTimeout(PRIVATE_TX_FETCH_TIMEOUT_MS) {
-                    zokaNodeApi.getPrivateTransaction(txHash)
-                }.also { privateTxCache[txHash] = it }
+                return zokaNodeApi.getPrivateTransaction(txHash)
+                    .also { privateTxCache[txHash] = it }
             } catch (e: HttpException) {
                 if (e.code() != 429) {
                     if (e.code() == 404) missingPrivateTxCache.add(txHash)
@@ -762,6 +1033,8 @@ class ZokaRepository @Inject constructor(
             } catch (e: TimeoutCancellationException) {
                 Log.w("ZokaRepository", "Timed out retrying $txHash, skipping")
                 return null
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w("ZokaRepository", "Skipping $txHash after retry: ${e.message}")
                 return null
@@ -929,12 +1202,10 @@ class ZokaRepository @Inject constructor(
     /**
      * Send a Zoka private transfer.
      *
-     * The selected build variant decides the proving path:
-     * - release keeps the transitional encrypted remote builder so the
-     *   currently published APK keeps working during the dual-stack window.
-     * - staging builds the private transaction locally and submits the
-     *   canonical JSON body to /private/tx, so the recovery seed never leaves
-     *   the phone.
+     * Every current build variant constructs the private transaction locally
+     * and submits its canonical JSON body, so the recovery seed never leaves
+     * the phone. The remote branch remains only as a compatibility guard for
+     * an explicitly configured legacy build.
      *
      * [publicKey] and [from] are still accepted so existing call-sites
      * compile; only [scanKeyHex], [to], [amount] and [fee] are actually
@@ -947,24 +1218,32 @@ class ZokaRepository @Inject constructor(
         fee: String,
         scanKeyHex: String,
         publicKey: String
-    ): Result<String> {
-        return try {
+    ): Result<String> = withContext(Dispatchers.IO) {
+        sendMutex.withLock {
+            try {
             val amountAtoms = zkaToAtoms(amount)
             val feeAtoms = zkaToAtoms(fee).coerceAtLeast(0L)
             val seedHex = scanKeyHex.removePrefix("0x")
 
             if (amountAtoms <= 0L) {
-                return Result.Error(IllegalArgumentException("Amount must be greater than zero"))
+                return@withLock Result.Error(
+                    IllegalArgumentException("Amount must be greater than zero")
+                )
             }
             if (!to.startsWith("zka1") || to.length < 32) {
-                return Result.Error(IllegalArgumentException("Invalid recipient address"))
+                return@withLock Result.Error(
+                    IllegalArgumentException("Invalid recipient address")
+                )
             }
 
             val seedBytesForValidation = tryHexToBytes(seedHex)
-                ?: return Result.Error(IllegalArgumentException("Invalid recovery seed"))
+                ?: return@withLock Result.Error(
+                    IllegalArgumentException("Invalid recovery seed")
+                )
             seedBytesForValidation.fill(0)
 
-            val hash = when (com.zoka.zkapriv.network.BuildConfig.ZOKA_PRIVATE_SEND_MODE) {
+            val sendMode = com.zoka.zkapriv.network.BuildConfig.ZOKA_PRIVATE_SEND_MODE
+            val hash = when (sendMode) {
                 "local-self-custody" -> submitLocalSelfCustodyTransfer(
                     from = from,
                     to = to,
@@ -979,33 +1258,32 @@ class ZokaRepository @Inject constructor(
                     seedHex = seedHex
                 )
                 else -> throw IllegalStateException(
-                    "Unsupported private send mode: ${com.zoka.zkapriv.network.BuildConfig.ZOKA_PRIVATE_SEND_MODE}"
+                    "Unsupported private send mode: $sendMode"
                 )
             }
 
-            addTransactionToCache(
-                from, Transaction(
-                    hash = hash,
-                    from = from,
-                    to = to,
-                    amount = amount,
-                    token = Token(address = "", symbol = "ZKA", decimals = 9, name = "Zoka"),
-                    timestamp = System.currentTimeMillis(),
-                    status = TransactionStatus.PENDING,
-                    fee = fee
+            // The local path has already committed its complete encrypted
+            // outbox before the reservation and before publication. Keep this
+            // legacy bookkeeping only for the transitional remote builder.
+            if (sendMode == "remote-seed") {
+                addTransactionToCache(
+                    from, Transaction(
+                        hash = hash,
+                        from = from,
+                        to = to,
+                        amount = amount,
+                        token = Token(address = "", symbol = "ZKA", decimals = 9, name = "Zoka"),
+                        timestamp = System.currentTimeMillis(),
+                        status = TransactionStatus.PENDING,
+                        fee = fee
+                    )
                 )
-            )
-
-            // Reserve `amount + fee` atoms locally so the dashboard's
-            // "Available" line drops immediately and a follow-up send
-            // can't accidentally try to spend the same UTXO twice. The
-            // reservation is cleared once the next balance scan sees
-            // the tx hash committed in a block (or 30 min elapses).
-            rpcSettings.recordPendingSend(
-                address = from,
-                hash = hash,
-                reservedAtoms = amountAtoms + feeAtoms
-            )
+                rpcSettings.recordPendingSend(
+                    address = from,
+                    hash = hash,
+                    reservedAtoms = Math.addExact(amountAtoms, feeAtoms)
+                )
+            }
 
             // Deliberately do NOT invalidate the balance cache here. The
             // pending-send reservation above is enough: the next read applies
@@ -1016,21 +1294,24 @@ class ZokaRepository @Inject constructor(
             // most wants to see the deduction reflected fast.
 
             Result.Success(hash)
-        } catch (e: HttpException) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: HttpException) {
             // Retrofit's HttpException.message() only carries the HTTP
             // status line ("HTTP 500"); the actual server explanation is
             // in errorBody(). Drain it so the failure dialog and logcat
             // surface the real cause (e.g. "not enough spendable ZKA",
             // "self-transfer not allowed", "invalid recipient").
-            val serverMsg = try {
-                e.response()?.errorBody()?.string()?.takeIf { it.isNotBlank() }
-            } catch (_: Exception) { null }
-            val msg = serverMsg ?: "HTTP ${e.code()} ${e.message()}"
-            Log.e("ZokaRepository", "sendTransaction HTTP ${e.code()} body=$serverMsg", e)
-            Result.Error(RuntimeException(msg))
-        } catch (e: Exception) {
-            Log.e("ZokaRepository", "sendTransaction error: ${e.message}", e)
-            Result.Error(e)
+                val serverMsg = try {
+                    e.response()?.errorBody()?.string()?.takeIf { it.isNotBlank() }
+                } catch (_: Exception) { null }
+                val msg = serverMsg ?: "HTTP ${e.code()} ${e.message()}"
+                Log.e("ZokaRepository", "sendTransaction HTTP ${e.code()} body=$serverMsg", e)
+                Result.Error(RuntimeException(msg))
+            } catch (e: Exception) {
+                Log.e("ZokaRepository", "sendTransaction error: ${e.message}", e)
+                Result.Error(e)
+            }
         }
     }
 
@@ -1043,12 +1324,36 @@ class ZokaRepository @Inject constructor(
         feeAtoms: Long,
         seedHex: String
     ): String {
+        val reservedAtoms = Math.addExact(amountAtoms, feeAtoms)
+        val requestKey = privateSendRequestKey(from, to, amountAtoms, feeAtoms)
+        val outboxRecords = restorePendingReservationsFromOutbox(from)
+        val outboxByHash = outboxRecords.associateBy { it.hash }
+        val retry = matchingPrivateTxOutbox(outboxRecords, requestKey)
+        if (retry != null) {
+            check(retry.address == from && retry.reservedAtoms == reservedAtoms) {
+                "Encrypted outbox metadata does not match the retried private send"
+            }
+            addPendingTransactionToCache(
+                from = from,
+                to = to,
+                amountAtoms = amountAtoms,
+                feeAtoms = feeAtoms,
+                hash = retry.hash
+            )
+            publishOutboxRecord(retry)
+            return retry.hash
+        }
+
         Log.d(
             "ZokaRepository",
             "sendTransaction (local self-custody build) initiated"
         )
         val pendingBodies = rpcSettings.expirePendingSends(from).map { pending ->
-            try {
+            val localRecord = outboxByHash[pending.hash]
+            if (localRecord != null) {
+                parseOutboxBody(localRecord)
+                localRecord.bodyJson
+            } else try {
                 gson.toJson(zokaNodeApi.getPrivateTransactionRaw(pending.hash))
             } catch (error: Exception) {
                 throw IllegalStateException(
@@ -1074,11 +1379,34 @@ class ZokaRepository @Inject constructor(
         built.metrics?.let { m ->
             Log.i("ZokaProofTiming", "metrics=$m")
         }
-        val submitted = zokaNodeApi.submitPrivateTx(built.body)
-        val submittedHash = submitted.get("hash")?.asString.orEmpty()
-        check(submittedHash == built.hash) {
-            "Node returned a different hash for locally-built private transaction"
+        check(built.body.get("tx_hash")?.asString == built.hash) {
+            "Local Zoka engine returned a body with a different transaction hash"
         }
+        val bodyJson = gson.toJson(built.body)
+        val outboxRecord = PrivateTxOutboxRecord(
+            hash = built.hash,
+            address = from,
+            reservedAtoms = reservedAtoms,
+            requestKey = requestKey,
+            bodyJson = bodyJson
+        )
+        // Crash-safe order: complete encrypted replay record first, then the
+        // cheap balance reservation. A missing second commit is reconstructed
+        // from the first on the next balance/send/reconciliation pass.
+        secureStorage.storePrivateTxOutbox(outboxRecord)
+        rpcSettings.recordPendingSend(
+            address = from,
+            hash = built.hash,
+            reservedAtoms = reservedAtoms
+        )
+        addPendingTransactionToCache(
+            from = from,
+            to = to,
+            amountAtoms = amountAtoms,
+            feeAtoms = feeAtoms,
+            hash = built.hash
+        )
+        publishOutboxRecord(outboxRecord)
         Log.i(
             "ZokaRepository",
             "TX submitted hash=${built.hash} via local self-custody proving"
@@ -1151,16 +1479,10 @@ class ZokaRepository @Inject constructor(
      * the private endpoint first; only fall through to the public one to
      * stay compatible with any legacy cached public hashes.
      *
-     * A pending tx (already broadcast, awaiting a miner) MUST stay
-     * PENDING until either:
-     *   - the receiver/sender UTXO scan confirms it landed in a block, or
-     *   - enough wall-clock time has elapsed that the tx was almost
-     *     certainly dropped from every mempool (currently 30 minutes).
-     *
-     * The previous logic flipped pending txs to FAILED in under 2 minutes
-     * and (worse) treated a 404 as CONFIRMED past that, which is exactly
-     * backwards: 404 means "node has no record", which for a fresh tx is
-     * the *expected* state while it's still propagating.
+     * The UI status may eventually render FAILED when every lookup misses for
+     * the long legacy display window below, but that label never releases the
+     * spend reservation or deletes its outbox. Only an on-chain confirmation
+     * can do that.
      */
     private suspend fun resolveTransactionStatus(hash: String, timestamp: Long): TransactionStatus {
         if (hash.startsWith("incoming_")) return TransactionStatus.CONFIRMED
@@ -1180,10 +1502,8 @@ class ZokaRepository @Inject constructor(
                 "failed", "rejected" -> return TransactionStatus.FAILED
             }
             // Mined once its hash is committed in a block; otherwise it stays
-            // PENDING for as long as it takes a miner to include it. We do NOT
-            // time it out to FAILED here — that was the bug that flipped a
-            // valid, still-pending send to "failed" after 30 minutes when no
-            // miner was running.
+            // PENDING for as long as it takes a miner to include it. A node
+            // retaining the body is positive evidence that it remains alive.
             return if (isPrivateTxConfirmedOnChain(hash))
                 TransactionStatus.CONFIRMED
             else
@@ -1233,13 +1553,20 @@ class ZokaRepository @Inject constructor(
         if (confirmedPrivateTxHashes.contains(hash)) return true
         val height = zokaNodeApi.getChainHeight().height
         var from = 1L
+        var previousHash = ""
         while (from <= height) {
             val to = minOf(from + RAW_BLOCK_SCAN_BATCH_SIZE - 1, height)
-            val response = fetchRawBlocksRange(from, to)
-            for (block in response.blocks) {
+            val response = fetchBlockDigestsRange(from, to)
+            val blocks = response.requireCompleteRange(
+                from,
+                to,
+                previousHash.takeIf(String::isNotBlank)
+            )
+            for (block in blocks) {
                 confirmedPrivateTxHashes.addAll(block.privateTxHashes)
                 if (hash in block.privateTxHashes) return true
             }
+            previousHash = blocks.last().header?.hash.orEmpty()
             from = to + 1
         }
         return false
@@ -1378,9 +1705,33 @@ class ZokaRepository @Inject constructor(
     }
 
     private fun addTransactionToCache(address: String, transaction: Transaction) {
-        val list = loadTransactionsFromPrefs(address).toMutableList()
+        val list = loadTransactionsFromPrefs(address)
+            .filterNot { it.hash == transaction.hash }
+            .toMutableList()
         list.add(0, transaction)
         saveTransactionsToPrefs(address, list.take(MAX_CACHED_TRANSACTIONS))
+    }
+
+    private fun addPendingTransactionToCache(
+        from: String,
+        to: String,
+        amountAtoms: Long,
+        feeAtoms: Long,
+        hash: String
+    ) {
+        addTransactionToCache(
+            from,
+            Transaction(
+                hash = hash,
+                from = from,
+                to = to,
+                amount = formatAtoms(amountAtoms),
+                token = Token(address = "", symbol = "ZKA", decimals = 9, name = "Zoka"),
+                timestamp = System.currentTimeMillis(),
+                status = TransactionStatus.PENDING,
+                fee = formatAtoms(feeAtoms)
+            )
+        )
     }
 
     /**

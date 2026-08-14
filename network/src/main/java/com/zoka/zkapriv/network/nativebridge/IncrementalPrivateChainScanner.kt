@@ -3,8 +3,10 @@ package com.zoka.zkapriv.network.nativebridge
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.zoka.zkapriv.network.model.ZokaRawBlocksRangeResponse
+import com.zoka.zkapriv.network.model.requireCompleteRange
 
 internal class IncrementalPrivateChainScanner(
+    private val blockDigestsRange: suspend (Long, Long) -> ZokaRawBlocksRangeResponse,
     private val rawBlocksRange: suspend (Long, Long) -> ZokaRawBlocksRangeResponse,
     private val privateTransactionRaw: suspend (String) -> JsonObject,
     private val snapshotStore: PrivateChainSnapshotStore = NoOpPrivateChainSnapshotStore
@@ -56,9 +58,9 @@ internal class IncrementalPrivateChainScanner(
             snapshot.ownerAddress = from
         }
         if (snapshot.scannedHeight > 0) {
-            val anchor = rawBlocksRange(snapshot.scannedHeight, snapshot.scannedHeight)
-                .blocks
-                .singleOrNull()
+            val anchor = blockDigestsRange(snapshot.scannedHeight, snapshot.scannedHeight)
+                .requireCompleteRange(snapshot.scannedHeight, snapshot.scannedHeight)
+                .single()
             val anchorHash = anchor?.header?.hash.orEmpty()
             if (anchorHash.isBlank() || anchorHash != snapshot.tipHash) {
                 clearSnapshot()
@@ -69,12 +71,14 @@ internal class IncrementalPrivateChainScanner(
         var rangeFrom = snapshot.scannedHeight + 1L
         while (rangeFrom <= height) {
             val rangeTo = minOf(rangeFrom + 249L, height)
-            val blocksByHeight = rawBlocksRange(rangeFrom, rangeTo)
-                .blocks
-                .associateBy { it.header?.blockHeight }
-            for (blockHeight in rangeFrom..rangeTo) {
-                val block = blocksByHeight[blockHeight]
-                    ?: throw IllegalStateException("Missing raw block $blockHeight during local scan")
+            val blocks = blockDigestsRange(rangeFrom, rangeTo).requireCompleteRange(
+                from = rangeFrom,
+                to = rangeTo,
+                expectedPrevHash = snapshot.tipHash.takeIf { snapshot.scannedHeight > 0 }
+            )
+            for (block in blocks) {
+                val blockHeight = block.header?.blockHeight
+                    ?: throw IllegalStateException("Missing block height during local scan")
                 val blockHash = block.header?.hash.orEmpty()
                 check(blockHash.isNotBlank()) {
                     "Raw block $blockHeight has no hash during local scan"
@@ -88,16 +92,48 @@ internal class IncrementalPrivateChainScanner(
                     coinbase.recipientAddress == from &&
                     coinbaseTx.receiver == from
                 ) {
-                    val coinbaseId = coinbase.outputId.ifBlank { "block:$blockHash" }
+                    // El resumen omite la prueba de rango y otros secretos del
+                    // coinbase. Solo para un coinbase propio se pide el bloque
+                    // entero, porque Rust necesita esa salida completa al
+                    // importarla como nota gastable.
+                    val fullBlock = rawBlocksRange(blockHeight, blockHeight)
+                        .requireCompleteRange(blockHeight, blockHeight)
+                        .single()
+                    check(fullBlock.header?.hash == blockHash) {
+                        "Full block $blockHeight does not match its digest"
+                    }
+                    val fullCoinbase = fullBlock.privateCoinbase
+                        ?: throw IllegalStateException(
+                            "Full block $blockHeight has no private coinbase"
+                        )
+                    val fullCoinbaseTx = fullBlock.transactions.firstOrNull()
+                        ?: throw IllegalStateException(
+                            "Full block $blockHeight has no coinbase transaction"
+                        )
+                    check(
+                            fullCoinbase.recipientAddress == from &&
+                            fullCoinbaseTx.receiver == from &&
+                            fullCoinbase.outputId == coinbase.outputId &&
+                            fullCoinbase.commitment == coinbase.commitment &&
+                            fullCoinbase.unlockHeight == coinbase.unlockHeight &&
+                            fullCoinbaseTx.amount == coinbaseTx.amount
+                    ) {
+                        "Full block $blockHeight does not match its owned coinbase digest"
+                    }
+                    val coinbaseId = fullCoinbase.outputId.ifBlank { "block:$blockHash" }
                     snapshot.coinbasesById[coinbaseId] = JsonObject().apply {
                         addProperty("source_block_hash", blockHash)
-                        addProperty("expected_amount_atoms", coinbaseTx.amount)
-                        add("output", gson.toJsonTree(coinbase))
+                        addProperty("expected_amount_atoms", fullCoinbaseTx.amount)
+                        add("output", gson.toJsonTree(fullCoinbase))
                     }
                 }
                 snapshot.scannedHeight = blockHeight
                 snapshot.tipHash = blockHash
             }
+            // El recorrido puede durar minutos sobre Tor. Guardar al cerrar
+            // cada lote evita volver a genesis si luego falta un cuerpo de tx
+            // o Android mata el proceso.
+            persistSnapshot()
             rangeFrom = rangeTo + 1L
         }
 
@@ -110,11 +146,13 @@ internal class IncrementalPrivateChainScanner(
                             error
                         )
                     }
+                check(body.get("tx_hash")?.asString == hash) {
+                    "Private transaction body $hash identifies a different transaction"
+                }
                 snapshot.confirmedBodiesByHash[hash] = body
             }
         }
 
-        persistSnapshot()
         return PreparedChainState(
             height = height,
             coinbases = snapshot.coinbasesById.values.toList(),
@@ -126,7 +164,7 @@ internal class IncrementalPrivateChainScanner(
 
     private fun clearSnapshot() {
         snapshot.clear()
-        runCatching { snapshotStore.clear() }
+        snapshotStore.clear()
     }
 
     private fun persistSnapshot() {
@@ -140,11 +178,12 @@ internal class IncrementalPrivateChainScanner(
         )
         val json = gson.toJson(persisted)
         if (json.length > MAX_PERSISTED_SNAPSHOT_CHARS) {
-            runCatching { snapshotStore.clear() }
-            return
+            snapshotStore.clear()
+            throw IllegalStateException(
+                "El avance del escaneo privado supera el límite seguro de persistencia"
+            )
         }
-        runCatching { snapshotStore.write(json) }
-            .onFailure { runCatching { snapshotStore.clear() } }
+        snapshotStore.write(json)
     }
 
     private fun restoreSnapshot(): ChainSnapshot {
@@ -175,7 +214,7 @@ internal class IncrementalPrivateChainScanner(
     }
 
     private companion object {
-        const val SNAPSHOT_SCHEMA_VERSION = 1
+        const val SNAPSHOT_SCHEMA_VERSION = 2
         const val MAX_PERSISTED_SNAPSHOT_CHARS = 2 * 1024 * 1024
     }
 }
