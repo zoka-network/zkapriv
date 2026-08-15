@@ -61,7 +61,13 @@ class FreshBalanceRevalidationTest {
     }
 
     @Test
-    fun changedTipReturnsFailClosedWithoutCachingOrPendingReconciliation() = runOnRepositoryIo {
+    fun reorganizedTipReturnsFailClosedWithoutCachingOrPendingReconciliation() = runOnRepositoryIo {
+        // Una reorganizacion de verdad: el bloque donde termino el escaneo ya
+        // no es el que esta en esa altura. Lo acumulado puede hablar de una
+        // rama que dejo de existir, asi que no se gasta sobre eso.
+        //
+        // Se distingue de que la cadena crezca por el ancla: aca la altura
+        // escaneada devuelve OTRO hash, no el que vimos.
         mockStatic(Log::class.java).use {
                 val fixture = fixture(withPendingReservation = true)
                 `when`(fixture.api.getChainHeight()).thenReturn(
@@ -69,9 +75,9 @@ class FreshBalanceRevalidationTest {
                     ZokaChainHeightResponse(2L)
                 )
                 `when`(fixture.api.getBlockDigestsRange(1L, 1L))
-                    .thenReturn(range(1L, "old-tip"))
+                    .thenReturn(range(1L, "old-tip"), range(1L, "reorganized-tip"))
                 `when`(fixture.api.getBlockDigestsRange(2L, 2L))
-                    .thenReturn(range(2L, "new-tip", prevHash = "old-tip"))
+                    .thenReturn(range(2L, "new-tip", prevHash = "reorganized-tip"))
 
                 val result = fixture.repository.getAddressBalance(
                     ADDRESS,
@@ -85,10 +91,58 @@ class FreshBalanceRevalidationTest {
                 assertEquals(RESERVED_ATOMS, balance.pendingOutAtoms)
                 assertFalse(wasInvoked(fixture.rpcSettings, "saveBalanceCache"))
                 assertFalse(wasInvoked(fixture.secureStorage, "removePrivateTxOutbox"))
-                verify(fixture.api, times(2)).getChainHeight()
-                verify(fixture.api).getBlockDigestsRange(1L, 1L)
-                verify(fixture.api).getBlockDigestsRange(2L, 2L)
-                verifyNoMoreInteractions(fixture.api)
+        }
+    }
+
+    @Test
+    fun aChainThatGrewDuringTheScanIsCaughtUpInsteadOfBlockingSend() = runOnRepositoryIo {
+        // Que la cadena crezca mientras se escanea no es un fallo: es lo que
+        // hace una cadena viva. Esta red produce un bloque cada dos minutos y
+        // un escaneo sobre Tor tarda, asi que exigir terminar exactamente en la
+        // punta dejaba el saldo sin verificar SIEMPRE y Enviar nunca se
+        // habilitaba, aunque no hubiera nada mal.
+        //
+        // El ancla distingue los dos casos: aca la altura escaneada sigue
+        // devolviendo el mismo hash, o sea que estamos en la rama buena, solo
+        // atras. Eso se alcanza escaneando los bloques nuevos.
+        mockStatic(Log::class.java).use {
+                val fixture = fixture()
+                `when`(fixture.api.getChainHeight()).thenReturn(
+                    ZokaChainHeightResponse(1L),
+                    ZokaChainHeightResponse(2L),
+                    ZokaChainHeightResponse(2L),
+                    ZokaChainHeightResponse(2L)
+                )
+                `when`(fixture.api.getBlockDigestsRange(1L, 1L))
+                    .thenReturn(range(1L, "tip-1"))
+                `when`(fixture.api.getBlockDigestsRange(2L, 2L))
+                    .thenReturn(range(2L, "tip-2", prevHash = "tip-1"))
+                `when`(fixture.api.getBlockDigestsRange(1L, 2L))
+                    .thenReturn(
+                        ZokaRawBlocksRangeResponse(
+                            fromHeight = 1L,
+                            toHeight = 2L,
+                            blocks = listOf(
+                                block(1L, "tip-1"),
+                                block(2L, "tip-2", prevHash = "tip-1")
+                            )
+                        )
+                    )
+
+                val result = fixture.repository.getAddressBalance(
+                    ADDRESS,
+                    SCAN_KEY,
+                    restoreHeight = 0L
+                )
+                val balance = (result as Result.Success).data
+
+                assertTrue(
+                    "un crecimiento normal de la cadena no puede bloquear el envio",
+                    balance.isVerified
+                )
+                assertEquals(2L, balance.scannedHeight)
+                assertEquals("tip-2", balance.verifiedTipHash)
+                assertNull(balance.verificationIssue)
         }
     }
 
@@ -178,6 +232,19 @@ class FreshBalanceRevalidationTest {
                     timestamp = 1L
                 )
             )
+        )
+    )
+
+    private fun block(
+        height: Long,
+        hash: String,
+        prevHash: String = ""
+    ) = ZokaRawBlockResponse(
+        header = ZokaRawBlockHeader(
+            blockHeight = height,
+            hash = hash,
+            prevHash = prevHash,
+            timestamp = 1L
         )
     )
 

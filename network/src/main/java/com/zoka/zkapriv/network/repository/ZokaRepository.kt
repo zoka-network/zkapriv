@@ -145,6 +145,16 @@ class ZokaRepository @Inject constructor(
         const val COINBASE_SENDER = "zoka:coinbase:v1"
         private const val COINBASE_MATURITY_BLOCKS = 60L
         private const val BALANCE_CACHE_TTL_MS = 30_000L
+        /**
+         * Cuántas veces se intenta alcanzar la punta antes de rendirse.
+         *
+         * Cada intento escanea solo los bloques nuevos, que con resúmenes son
+         * segundos. Tres alcanza de sobra para una red que produce un bloque
+         * cada dos minutos; si hicieran falta más, el problema no es la
+         * carrera sino que no damos abasto, y eso hay que decirlo en vez de
+         * seguir intentando.
+         */
+        private const val MAX_TIP_CATCHUP_ATTEMPTS = 3
         private const val BALANCE_SCAN_SCHEMA_VERSION = 1
         private const val MAX_BALANCE_SCAN_SNAPSHOT_CHARS = 2 * 1024 * 1024
         private const val SAVED_BALANCE_VERIFICATION_ISSUE =
@@ -268,8 +278,27 @@ class ZokaRepository @Inject constructor(
                     return@withLock Result.Success(cachedNow.first.withReconciledPendings(address))
                 }
                 val rawInfo = if (scanKey != null) {
-                    val scanned = scanFullBalance(address, scanKey, height, restoreHeight)
-                    val revalidated = revalidateFreshFullScan(scanned.balance)
+                    var scanned = scanFullBalance(address, scanKey, height, restoreHeight)
+                    var revalidated = revalidateFreshFullScan(scanned.balance)
+                    // Alcanzar la cadena en vez de rendirse ante ella.
+                    //
+                    // Que crezca mientras escaneamos no es un fallo: es lo que
+                    // hace una cadena viva. Los bloques nuevos son pocos y con
+                    // resúmenes cuestan segundos, así que se escanean y se
+                    // vuelve a verificar. Acotado, porque si la red produjera
+                    // más rápido de lo que podemos seguir, insistir sería un
+                    // bucle: ahí sí conviene rendirse y decirlo.
+                    var attempts = 0
+                    while (
+                        !revalidated.tipIsCurrent &&
+                        revalidated.reachable &&
+                        attempts < MAX_TIP_CATCHUP_ATTEMPTS
+                    ) {
+                        attempts++
+                        val newHeight = zokaNodeApi.getChainHeight().height
+                        scanned = scanFullBalance(address, scanKey, newHeight, restoreHeight)
+                        revalidated = revalidateFreshFullScan(scanned.balance)
+                    }
                     if (!revalidated.tipIsCurrent) {
                         // The confirmations belong to a tip that is no longer
                         // current (or could not be proven current). Never let
@@ -579,7 +608,17 @@ class ZokaRepository @Inject constructor(
 
     private data class FreshTipRevalidation(
         val balance: BalanceInfo,
-        val tipIsCurrent: Boolean
+        val tipIsCurrent: Boolean,
+        /**
+         * La punta que escaneamos sigue siendo canónica, pero la cadena creció
+         * mientras tanto.
+         *
+         * Es un caso muy distinto de una reorganización, aunque los dos dejen
+         * el saldo sin verificar: acá no hay nada mal, solo llegamos tarde. Se
+         * arregla escaneando los bloques nuevos, que son pocos y baratos. Una
+         * reorganización, en cambio, invalida lo acumulado y obliga a rehacer.
+         */
+        val reachable: Boolean = false
     )
 
     private fun readBalanceScanSnapshot(address: String): BalanceScanSnapshot? =
@@ -633,14 +672,42 @@ class ZokaRepository @Inject constructor(
                     tipIsCurrent = true
                 )
             } else {
+                // No estamos en la punta. Hay dos motivos posibles y no dan lo
+                // mismo: o la cadena avanzó mientras escaneábamos -- normal,
+                // pasa siempre, se alcanza -- o el bloque donde terminamos ya
+                // no es el que está en esa altura, que es una reorganización y
+                // obliga a rehacer el escaneo.
+                //
+                // Distinguirlos importa: exigir terminar exactamente en la
+                // punta es correr contra un blanco móvil. Esta red produce un
+                // bloque cada dos minutos y un escaneo sobre Tor tarda; el
+                // saldo quedaba sin verificar siempre y Enviar nunca se
+                // habilitaba, aunque no hubiera nada mal.
+                val anchorHash = runCatching {
+                    fetchBlockDigestsRange(balance.scannedHeight, balance.scannedHeight)
+                        .requireCompleteRange(balance.scannedHeight, balance.scannedHeight)
+                        .single()
+                        .header
+                        ?.hash
+                        .orEmpty()
+                }.getOrDefault("")
+                val stillCanonical = anchorHash.isNotBlank() &&
+                    balance.verifiedTipHash.isNotBlank() &&
+                    anchorHash == balance.verifiedTipHash
+                val behind = stillCanonical && balance.scannedHeight < finalHeight
                 FreshTipRevalidation(
                     balance = balance.copy(
                         isVerified = false,
-                        verificationIssue =
+                        verificationIssue = if (behind) {
+                            "The chain grew while the private balance was being scanned. " +
+                                "Catching up before sending is enabled."
+                        } else {
                             "The P2P chain tip changed while the private balance was being scanned. " +
                                 "Sending is disabled until a new scan verifies the current tip."
+                        }
                     ),
-                    tipIsCurrent = false
+                    tipIsCurrent = false,
+                    reachable = behind
                 )
             }
         } catch (error: CancellationException) {
