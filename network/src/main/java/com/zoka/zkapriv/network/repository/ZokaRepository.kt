@@ -141,7 +141,19 @@ class ZokaRepository @Inject constructor(
         private const val PREF_KEY_PREFIX = "transactions_"
         private const val PREF_KEY_NETWORK_EPOCH = "network_chain_id_epoch"
         private const val ATOMS_PER_ZKA = 1_000_000L
-        private const val RAW_BLOCK_SCAN_BATCH_SIZE = 250L
+        /**
+         * Cuántos bloques se piden por vez.
+         *
+         * Eran 250, heredado de cuando cada bloque viajaba entero y un tramo
+         * grande era medio mega. Con resúmenes comprimidos un bloque son ~51
+         * bytes, así que mil entran en cincuenta kilobytes y el cuello deja de
+         * ser el ancho de banda: pasa a ser el viaje de ida y vuelta, que sobre
+         * Tor cuesta uno o dos segundos. Cuatro veces menos viajes.
+         *
+         * Mil es el techo que sirve el protocolo de resúmenes; pedir más haría
+         * que el par recorte la respuesta y perderíamos el viaje igual.
+         */
+        private const val RAW_BLOCK_SCAN_BATCH_SIZE = 1_000L
         const val COINBASE_SENDER = "zoka:coinbase:v1"
         private const val COINBASE_MATURITY_BLOCKS = 60L
         private const val BALANCE_CACHE_TTL_MS = 30_000L
