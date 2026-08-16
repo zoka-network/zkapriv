@@ -312,7 +312,9 @@ fun DashboardScreen(
                         syncing = uiState.syncing,
                         syncFraction = uiState.syncFraction,
                         syncScannedHeight = uiState.syncScannedHeight,
-                        syncChainHeight = uiState.syncChainHeight
+                        syncChainHeight = uiState.syncChainHeight,
+                        syncPhaseLabel = uiState.syncPhaseLabel,
+                        syncDetail = uiState.syncDetail
                     )
                 }
 
@@ -485,7 +487,9 @@ private fun Web3BalanceCard(
     syncing: Boolean = false,
     syncFraction: Float? = null,
     syncScannedHeight: Long = 0,
-    syncChainHeight: Long = 0
+    syncChainHeight: Long = 0,
+    syncPhaseLabel: String = "",
+    syncDetail: String = ""
 ) {
     val displayUsdValue = if (totalPortfolioValue > 0) totalPortfolioValue else usdValue
     val hasUsdPrice = currentPrice > 0.0
@@ -717,7 +721,7 @@ private fun Web3BalanceCard(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Syncing with the network",
+                                text = syncPhaseLabel.ifBlank { "Syncing with the network" },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = textSecondary
                             )
@@ -753,9 +757,9 @@ private fun Web3BalanceCard(
                                 trackColor = textSecondary.copy(alpha = 0.15f)
                             )
                         }
-                        if (syncChainHeight > 0) {
+                        if (syncDetail.isNotBlank()) {
                             Text(
-                                text = "Block $syncScannedHeight of $syncChainHeight",
+                                text = syncDetail,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = textSecondary.copy(alpha = 0.7f)
                             )

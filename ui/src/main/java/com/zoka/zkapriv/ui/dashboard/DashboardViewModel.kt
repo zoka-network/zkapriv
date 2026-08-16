@@ -37,7 +37,25 @@ class DashboardViewModel @Inject constructor(
                         syncing = progreso.scanning,
                         syncFraction = progreso.fraction,
                         syncScannedHeight = progreso.scannedHeight,
-                        syncChainHeight = progreso.chainHeight
+                        syncChainHeight = progreso.chainHeight,
+                        syncPhaseLabel = when (progreso.phase) {
+                            ZokaRepository.SyncProgress.Phase.BLOCKS -> "Syncing with the network"
+                            ZokaRepository.SyncProgress.Phase.BODIES -> "Reading transactions"
+                        },
+                        syncDetail = when (progreso.phase) {
+                            ZokaRepository.SyncProgress.Phase.BLOCKS ->
+                                if (progreso.chainHeight > 0) {
+                                    "Block ${progreso.scannedHeight} of ${progreso.chainHeight}"
+                                } else {
+                                    ""
+                                }
+                            ZokaRepository.SyncProgress.Phase.BODIES ->
+                                if (progreso.bodiesTotal > 0) {
+                                    "${progreso.bodiesDone} of ${progreso.bodiesTotal}"
+                                } else {
+                                    ""
+                                }
+                        }
                     )
                 }
             }
@@ -324,5 +342,8 @@ data class DashboardState(
     val syncing: Boolean = false,
     val syncFraction: Float? = null,
     val syncScannedHeight: Long = 0,
-    val syncChainHeight: Long = 0
+    val syncChainHeight: Long = 0,
+    /** Texto de la fase, para que la franja diga que esta haciendo y no solo cuanto. */
+    val syncPhaseLabel: String = "",
+    val syncDetail: String = ""
 )

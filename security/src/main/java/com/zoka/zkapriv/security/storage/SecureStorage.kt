@@ -154,6 +154,27 @@ class SecureStorage @Inject constructor(
     }
 
     /**
+     * Los cuerpos de transaccion privada que ya sabemos que nadie tiene.
+     *
+     * Esta lista vivia solo en memoria, asi que cada arranque de la app volvia
+     * a pedirlos y a recibir el mismo "not found". Medido en el telefono: el
+     * escaneo de cadena tardaba dos segundos y los reintentos sesenta. El 97%
+     * del tiempo se iba en redescubrir algo que ya sabiamos.
+     *
+     * No es para siempre: se guarda tambien cuando se marcaron, para volver a
+     * probar de vez en cuando por si la red los recupera.
+     */
+    fun storeUnavailablePrivateTxBodies(json: String) {
+        check(prefs.edit().putString(KEY_CUERPOS_NO_DISPONIBLES, json).commit()) {
+            "No se pudo guardar la lista de cuerpos no disponibles"
+        }
+    }
+
+    fun getUnavailablePrivateTxBodies(): String? {
+        return prefs.getString(KEY_CUERPOS_NO_DISPONIBLES, null)
+    }
+
+    /**
      * Persiste en un solo valor cifrado todo lo necesario para recuperar una
      * publicación ambigua. Este commit debe ocurrir antes de crear la reserva
      * RPC: si el proceso muere entre ambos pasos, la reserva se reconstruye a
@@ -193,6 +214,9 @@ class SecureStorage @Inject constructor(
             "No se pudo retirar la transacciÃ³n confirmada de la outbox"
         }
     }
+
+    private val KEY_CUERPOS_NO_DISPONIBLES = "cuerpos_privados_no_disponibles"
+
 
     private fun balanceScanKey(address: String): String = "balance_scan_$address"
 

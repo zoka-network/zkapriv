@@ -146,14 +146,30 @@ class ZokaRepository @Inject constructor(
     data class SyncProgress(
         val scanning: Boolean,
         val scannedHeight: Long = 0,
-        val chainHeight: Long = 0
+        val chainHeight: Long = 0,
+        /**
+         * En que fase va, porque son dos y duran cosas muy distintas.
+         *
+         * Medir solo los bloques hacia que la franja se clavara en 99% durante
+         * toda la busqueda de cuerpos -- que es justo donde se va el tiempo.
+         * Un indicador que se congela en el tramo lento es peor que no tenerlo:
+         * parece que la app se colgo.
+         */
+        val phase: Phase = Phase.BLOCKS,
+        val bodiesDone: Int = 0,
+        val bodiesTotal: Int = 0
     ) {
+        enum class Phase { BLOCKS, BODIES }
+
         /** Fraccion escaneada, o `null` si todavia no se sabe hasta donde hay que ir. */
         val fraction: Float?
-            get() = if (chainHeight > 0 && scannedHeight in 0..chainHeight) {
-                (scannedHeight.toFloat() / chainHeight.toFloat()).coerceIn(0f, 1f)
-            } else {
-                null
+            get() = when {
+                phase == Phase.BODIES && bodiesTotal > 0 ->
+                    (bodiesDone.toFloat() / bodiesTotal.toFloat()).coerceIn(0f, 1f)
+                phase == Phase.BODIES -> null
+                chainHeight > 0 && scannedHeight in 0..chainHeight ->
+                    (scannedHeight.toFloat() / chainHeight.toFloat()).coerceIn(0f, 1f)
+                else -> null
             }
     }
 
@@ -161,6 +177,38 @@ class ZokaRepository @Inject constructor(
     val syncProgress: kotlinx.coroutines.flow.StateFlow<SyncProgress> = _syncProgress
 
     private val missingPrivateTxCache = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * La lista de cuerpos irrecuperables sobrevive al cierre de la app.
+     *
+     * Vivia solo en memoria: cada arranque volvia a pedir los mismos doce
+     * cuerpos y a recibir el mismo "not found". Medido en el telefono, el
+     * escaneo de cadena tardaba dos segundos y esos reintentos sesenta.
+     */
+    private var cuerposPerdidosCargados = false
+
+    private fun cargarCuerposPerdidos() {
+        if (cuerposPerdidosCargados) return
+        cuerposPerdidosCargados = true
+        val guardado = runCatching { secureStorage.getUnavailablePrivateTxBodies() }.getOrNull()
+            ?: return
+        runCatching {
+            org.json.JSONArray(guardado)
+        }.onSuccess { arr ->
+            for (i in 0 until arr.length()) {
+                arr.optString(i).takeIf { it.isNotBlank() }?.let { missingPrivateTxCache.add(it) }
+            }
+            Log.d("ZokaRepository", "cuerpos irrecuperables recordados: ${missingPrivateTxCache.size}")
+        }
+    }
+
+    private fun guardarCuerposPerdidos() {
+        runCatching {
+            secureStorage.storeUnavailablePrivateTxBodies(
+                org.json.JSONArray(missingPrivateTxCache.toList()).toString()
+            )
+        }
+    }
 
     /**
      * Cuantos escaneos pasan antes de volver a probar los cuerpos que faltan.
@@ -685,6 +733,7 @@ class ZokaRepository @Inject constructor(
         escaneosDesdeElUltimoReintento++
         if (escaneosDesdeElUltimoReintento >= ESCANEOS_ENTRE_REINTENTOS_DE_CUERPOS) {
             missingPrivateTxCache.clear()
+            guardarCuerposPerdidos()
             escaneosDesdeElUltimoReintento = 0
         }
     }
@@ -801,6 +850,7 @@ class ZokaRepository @Inject constructor(
         restoreHeight: Long = 0
     ): FullBalanceScanResult {
         val scanStartedAtMs = System.currentTimeMillis()
+        cargarCuerposPerdidos()
         Log.d("ZokaRepository", "scanFullBalance: START chainHeight=$chainHeight restoreHeight=$restoreHeight")
         _syncProgress.value = SyncProgress(
             scanning = true,
@@ -1030,6 +1080,14 @@ class ZokaRepository @Inject constructor(
         // single-threaded — only the network fetch runs in parallel.
         var missingTxCount = 0
         val hashList = allPrivateTxHashes.toList()
+        _syncProgress.value = SyncProgress(
+            scanning = true,
+            scannedHeight = chainHeight,
+            chainHeight = chainHeight,
+            phase = SyncProgress.Phase.BODIES,
+            bodiesDone = 0,
+            bodiesTotal = hashList.size
+        )
         for (batchStart in hashList.indices step PRIVATE_TX_FETCH_BATCH_SIZE) {
             val batch = hashList.subList(
                 batchStart,
@@ -1071,6 +1129,14 @@ class ZokaRepository @Inject constructor(
                     receivedByTx.add(txHash to amount)
                 }
             }
+            _syncProgress.value = SyncProgress(
+                scanning = true,
+                scannedHeight = chainHeight,
+                chainHeight = chainHeight,
+                phase = SyncProgress.Phase.BODIES,
+                bodiesDone = minOf(batchStart + PRIVATE_TX_FETCH_BATCH_SIZE, hashList.size),
+                bodiesTotal = hashList.size
+            )
             if (batchStart + PRIVATE_TX_FETCH_BATCH_SIZE < hashList.size) {
                 delay(PRIVATE_TX_BATCH_DELAY_MS)
             }
@@ -1186,7 +1252,10 @@ class ZokaRepository @Inject constructor(
                 .also { privateTxCache[txHash] = it }
         } catch (e: HttpException) {
             if (e.code() != 429) {
-                if (e.code() == 404) missingPrivateTxCache.add(txHash)
+                if (e.code() == 404) {
+                    missingPrivateTxCache.add(txHash)
+                    guardarCuerposPerdidos()
+                }
                 Log.w("ZokaRepository", "Skipping $txHash: ${e.message}")
                 return null
             }
@@ -1213,7 +1282,10 @@ class ZokaRepository @Inject constructor(
                     .also { privateTxCache[txHash] = it }
             } catch (e: HttpException) {
                 if (e.code() != 429) {
-                    if (e.code() == 404) missingPrivateTxCache.add(txHash)
+                    if (e.code() == 404) {
+                    missingPrivateTxCache.add(txHash)
+                    guardarCuerposPerdidos()
+                }
                     Log.w("ZokaRepository", "Skipping $txHash after retry: ${e.message}")
                     return null
                 }
