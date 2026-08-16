@@ -137,6 +137,15 @@ class ZokaRepository @Inject constructor(
     private val privateTxCache = java.util.concurrent.ConcurrentHashMap<String, ZokaPrivateTransactionResponse>()
     private val missingPrivateTxCache = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
+    /**
+     * Cuantos escaneos pasan antes de volver a probar los cuerpos que faltan.
+     *
+     * Ni cero ni infinito. Cero era lo que habia y hacia que cada refresco
+     * gastara minutos en cuerpos perdidos; infinito perderia para siempre uno
+     * que reaparezca porque se conecto un par que si lo tiene.
+     */
+    private var escaneosDesdeElUltimoReintento = 0
+
     companion object {
         private const val PREF_KEY_PREFIX = "transactions_"
         private const val PREF_KEY_NETWORK_EPOCH = "network_chain_id_epoch"
@@ -167,6 +176,13 @@ class ZokaRepository @Inject constructor(
          * seguir intentando.
          */
         private const val MAX_TIP_CATCHUP_ATTEMPTS = 3
+        /**
+         * Cada cuantos escaneos se reintentan los cuerpos privados que no
+         * aparecieron. Diez: con refrescos de medio minuto, una oportunidad
+         * cada pocos minutos alcanza para recuperar uno que reaparezca sin
+         * pagar el costo en cada pasada.
+         */
+        private const val ESCANEOS_ENTRE_REINTENTOS_DE_CUERPOS = 10
         private const val BALANCE_SCAN_SCHEMA_VERSION = 1
         private const val MAX_BALANCE_SCAN_SNAPSHOT_CHARS = 2 * 1024 * 1024
         private const val SAVED_BALANCE_VERIFICATION_ISSUE =
@@ -633,6 +649,21 @@ class ZokaRepository @Inject constructor(
         val reachable: Boolean = false
     )
 
+    /**
+     * Vuelve a dar una oportunidad a los cuerpos faltantes, cada tantas
+     * pasadas.
+     *
+     * Un cuerpo puede reaparecer: basta con conectarse a un par que si lo
+     * tenga. Pero probarlos todos en cada escaneo es lo que trababa la wallet.
+     */
+    private fun reintentarAlgunosCuerposFaltantes() {
+        escaneosDesdeElUltimoReintento++
+        if (escaneosDesdeElUltimoReintento >= ESCANEOS_ENTRE_REINTENTOS_DE_CUERPOS) {
+            missingPrivateTxCache.clear()
+            escaneosDesdeElUltimoReintento = 0
+        }
+    }
+
     private fun readBalanceScanSnapshot(address: String): BalanceScanSnapshot? =
         runCatching {
             val raw = secureStorage.getBalanceScanSnapshot(address) ?: return null
@@ -771,10 +802,25 @@ class ZokaRepository @Inject constructor(
         // source of spends: a note can never show as spendable just because a
         // per-tx body fetch was rate-limited or missed.
         val allInputNullifiers = mutableSetOf<String>()
-        // Every full scan re-attempts any body a prior scan couldn't fetch: these
-        // hashes are committed on-chain, so a 404 is transient (a node's missing
-        // body / replication lag), never permanent.
-        missingPrivateTxCache.clear()
+        // Un cuerpo que no aparece NO siempre es falta de replica.
+        //
+        // El codigo anterior asumia que un 404 era transitorio y reintentaba
+        // todos los faltantes en cada escaneo. Medido contra la red real: de
+        // 266 transacciones privadas de la cadena, **12 no las tiene ni el nodo
+        // que tiene la cadena entera**. Los bloques guardan el hash y los
+        // nulificadores, no el cuerpo; si ningun nodo vivo lo recibio, ese
+        // cuerpo no existe mas.
+        //
+        // Reintentarlos en cada pasada costaba 45 segundos cada uno -- nueve
+        // minutos por escaneo -- y el escaneo no alcanzaba a terminar antes de
+        // que lo reiniciaran. La wallet quedaba en un bucle: nunca DONE, nunca
+        // saldo verificado, nunca Enviar habilitado.
+        //
+        // Ahora se recuerdan entre escaneos y se reintentan de a poco. Un
+        // cuerpo que reaparezca (un par nuevo que si lo tenga) se recupera en
+        // el siguiente reintento; uno que se perdio de verdad deja de costar
+        // tiempo en cada refresco.
+        reintentarAlgunosCuerposFaltantes()
 
         // Phase 1: Scan blocks for our coinbase outputs and private tx hashes.
         // A freshly-created wallet records its creation height as restoreHeight,
