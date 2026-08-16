@@ -346,6 +346,9 @@ class ZokaRepository @Inject constructor(
         // la misma, solo se pide con menos pausas en el medio.
         private const val PRIVATE_TX_FETCH_BATCH_SIZE = 24
         private const val PRIVATE_TX_BATCH_DELAY_MS = 0L
+
+        /** Cada cuantas tandas de cuerpos se anota lo descubierto. */
+        private const val TANDAS_ENTRE_PUNTOS_DE_CONTROL = 2
     }
 
     data class BalanceInfo(
@@ -1194,6 +1197,45 @@ class ZokaRepository @Inject constructor(
         // roughly batch-size-fold. Decryption/bookkeeping below stays
         // single-threaded — only the network fetch runs in parallel.
         var missingTxCount = 0
+        // Guardar el resultado a mitad de camino, no solo al terminar.
+        //
+        // Estaba solo al final y NINGUN escaneo llegaba a terminar: la fase de
+        // cuerpos tarda minutos y cualquier refresco, cierre o cambio de
+        // pantalla la corta antes. El resultado no se escribia nunca, asi que
+        // el trabajo se rehacia entero una y otra vez -- justo lo que el
+        // usuario describia como "empezar todo desde cero".
+        //
+        // Se guarda solo si hay ancla: sin ancla no sabemos a que rama
+        // pertenece lo descubierto, y persistirlo seria peor que perderlo.
+        fun guardarResultadoDeCuerpos() {
+            if (anclaHash.isBlank()) return
+            runCatching {
+                writeBalanceScanSnapshot(
+                    BalanceScanSnapshot(
+                        address = address,
+                        scannedHeight = chainHeight,
+                        tipHash = anclaHash,
+                        coinbases = myCoinbases.toList(),
+                        privateTxHashes = allPrivateTxHashes.toList(),
+                        nullifiers = allInputNullifiers.toList(),
+                        txTimestamps = txTimestampByHash.toMap(),
+                        ownedOutputs = ownedOutputs.toList(),
+                        // Un cuerpo que no se pudo bajar NO se marca procesado:
+                        // se reintenta la proxima vez, que es justo lo que
+                        // queremos para los que fallaron por red.
+                        processedTxHashes = allPrivateTxHashes
+                            .filter { it in yaProcesados || privateTxCache.containsKey(it) }
+                            .toList(),
+                        ourOutputsByTx = ourOutputsByTx.toMap(),
+                        txInputNullifiers = txInputNullifiers.mapValues { it.value.toList() }
+                    )
+                )
+            }.onFailure {
+                Log.w("ZokaRepository", "no se pudo guardar el resultado del escaneo: ${it.message}")
+            }
+        }
+
+        var tandasDesdeElUltimoGuardado = 0
         val hashList = hashesPendientes
         _syncProgress.value = SyncProgress(
             scanning = true,
@@ -1252,48 +1294,19 @@ class ZokaRepository @Inject constructor(
                 bodiesDone = minOf(batchStart + PRIVATE_TX_FETCH_BATCH_SIZE, hashList.size),
                 bodiesTotal = hashList.size
             )
+            // Un punto de control cada pocas tandas: si esto se corta a la
+            // mitad, lo bajado hasta aca se conserva.
+            tandasDesdeElUltimoGuardado++
+            if (tandasDesdeElUltimoGuardado >= TANDAS_ENTRE_PUNTOS_DE_CONTROL) {
+                guardarResultadoDeCuerpos()
+                tandasDesdeElUltimoGuardado = 0
+            }
             if (batchStart + PRIVATE_TX_FETCH_BATCH_SIZE < hashList.size) {
                 if (PRIVATE_TX_BATCH_DELAY_MS > 0L) delay(PRIVATE_TX_BATCH_DELAY_MS)
             }
         }
 
-        // El resultado de la fase de cuerpos se guarda ahora, no solo el avance
-        // por bloques.
-        //
-        // Esto es lo que hacia que cerrar la app costara todo el trabajo de
-        // nuevo: la instantanea se escribia ANTES de esta fase, asi que
-        // guardaba que bloques se habian recorrido pero no que se habia
-        // encontrado en ellos. Al volver a abrir, los 266 cuerpos se bajaban
-        // otra vez para redescubrir exactamente lo mismo.
-        //
-        // Se guarda solo si hay ancla: sin ancla no sabemos a que rama
-        // pertenece lo descubierto, y persistirlo seria peor que perderlo.
-        if (anclaHash.isNotBlank()) {
-            runCatching {
-                writeBalanceScanSnapshot(
-                    BalanceScanSnapshot(
-                        address = address,
-                        scannedHeight = chainHeight,
-                        tipHash = anclaHash,
-                        coinbases = myCoinbases.toList(),
-                        privateTxHashes = allPrivateTxHashes.toList(),
-                        nullifiers = allInputNullifiers.toList(),
-                        txTimestamps = txTimestampByHash.toMap(),
-                        ownedOutputs = ownedOutputs.toList(),
-                        // Un cuerpo que no se pudo bajar NO se marca procesado:
-                        // se reintenta la proxima vez, que es justo lo que
-                        // queremos para los que fallaron por red.
-                        processedTxHashes = allPrivateTxHashes
-                            .filter { it in yaProcesados || privateTxCache.containsKey(it) }
-                            .toList(),
-                        ourOutputsByTx = ourOutputsByTx.toMap(),
-                        txInputNullifiers = txInputNullifiers.mapValues { it.value.toList() }
-                    )
-                )
-            }.onFailure {
-                Log.w("ZokaRepository", "no se pudo guardar el resultado del escaneo: ${it.message}")
-            }
-        }
+        guardarResultadoDeCuerpos()
 
         // Phase 3: Sum unspent outputs
         var matureAtoms = 0L
