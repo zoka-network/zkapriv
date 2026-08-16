@@ -11,8 +11,21 @@ object Constants {
     // Son direcciones onion y solo se alcanzan por Tor, que la app levanta
     // adentro (Arti). Un nodo casero no tiene puerto abierto ni IP fija; la
     // onion es lo que lo hace alcanzable sin depender de eso.
+    // Mas de una, a proposito.
+    //
+    // Con un solo seed la wallet no tiene descubrimiento: se conecta a ese o a
+    // ninguno, y cada vez que ese par tarda, la app entera espera los noventa
+    // segundos de PEER_WAIT. Medido contra la red real el 16/08: habia tres
+    // onions vivas y la app conocia una.
+    //
+    // Que Kademlia este encendida no alcanza. El movil sale por Tor y solo
+    // puede alcanzar direcciones onion; los pares caseros que descubra por IP
+    // no tienen puerto abierto y no le sirven. Si las onions de la red no
+    // llegan hasta el, el descubrimiento no tiene con que trabajar.
     val ZOKA_P2P_SEEDS = listOf(
-        "/onion3/d5pk3nhesk5wlvz4f5unbhcozxgtj7u6mhagauyprjrxndzpwbaoeiid:28080"
+        "/onion3/d5pk3nhesk5wlvz4f5unbhcozxgtj7u6mhagauyprjrxndzpwbaoeiid:28080",
+        "/onion3/wtrwvlzli37utagttkwmqipm25uqtr4oiib4k6jpgjpyddqk2352btad:28080",
+        "/onion3/uzn6e2cxyihxuue2j2wsp4dhtloltqq4ai6gkspjoruu54ikhmtfgayd:28080"
     )
 
     // RPC HTTP heredado.
