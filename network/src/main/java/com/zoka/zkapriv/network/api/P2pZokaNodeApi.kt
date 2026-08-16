@@ -173,6 +173,16 @@ class P2pZokaNodeApi(
         runCatching { leerJson(red.status()).get("connected")?.asBoolean == true }
             .getOrDefault(false)
 
+    override suspend fun peerCount(): Int? = withContext(Dispatchers.IO) {
+        // El estado no viaja por el canal serializado a proposito, asi que
+        // preguntarlo no hace cola detras de una descarga de bloques. Se puede
+        // sondear seguido sin frenar el escaneo.
+        runCatching {
+            if (!asegurarRed().let { true }) return@runCatching null
+            leerJson(red.status()).get("peers")?.asInt
+        }.getOrNull()
+    }
+
     override suspend fun health(): ZokaHealthResponse = withContext(Dispatchers.IO) {
         val conectado = runCatching { asegurarRed() }.isSuccess && conectada()
         ZokaHealthResponse(status = if (conectado) "ok" else "disconnected")

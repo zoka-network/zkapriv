@@ -173,6 +173,59 @@ class ZokaRepository @Inject constructor(
             }
     }
 
+    /**
+     * Cuantos pares hay, con su historial y su frescura.
+     *
+     * Copiado del criterio de ZSilent: un numero de pares sin fecha miente.
+     * El conteo se actualiza cuando el nodo bombea eventos, asi que si el nodo
+     * esta ocupado el dato envejece -- y presentarlo como actual haria creer
+     * que hay red cuando puede no haberla.
+     *
+     * Por eso viaja con `observedAtMillis` y la pantalla distingue tres casos:
+     * en vivo, ultimo conocido, y nunca leido.
+     */
+    data class PeerTelemetry(
+        val peers: Int = 0,
+        val observedAtMillis: Long = 0L,
+        val consecutiveFailures: Int = 0,
+        /** Las ultimas lecturas, para la linea de tendencia. */
+        val samples: List<Int> = emptyList()
+    ) {
+        val everObserved: Boolean get() = observedAtMillis > 0L
+
+        fun isFresh(nowMillis: Long): Boolean =
+            everObserved &&
+                consecutiveFailures == 0 &&
+                (nowMillis - observedAtMillis) <= VENTANA_FRESCA_MS
+    }
+
+    private val _peerTelemetry = kotlinx.coroutines.flow.MutableStateFlow(PeerTelemetry())
+    val peerTelemetry: kotlinx.coroutines.flow.StateFlow<PeerTelemetry> = _peerTelemetry
+
+    /**
+     * Toma una muestra del conteo de pares.
+     *
+     * Una lectura fallida no borra la anterior: incrementa el contador de
+     * fallos y deja el ultimo valor conocido, que la pantalla etiqueta como
+     * tal. Tirar el dato ante el primer error hacia parpadear el indicador.
+     */
+    suspend fun muestrearPares() {
+        val leido = runCatching { zokaNodeApi.peerCount() }.getOrNull()
+        val ahora = System.currentTimeMillis()
+        _peerTelemetry.value = _peerTelemetry.value.let { previo ->
+            if (leido == null) {
+                previo.copy(consecutiveFailures = previo.consecutiveFailures + 1)
+            } else {
+                previo.copy(
+                    peers = leido,
+                    observedAtMillis = ahora,
+                    consecutiveFailures = 0,
+                    samples = (previo.samples + leido).takeLast(MUESTRAS_DE_PARES)
+                )
+            }
+        }
+    }
+
     private val _syncProgress = kotlinx.coroutines.flow.MutableStateFlow(SyncProgress(false))
     val syncProgress: kotlinx.coroutines.flow.StateFlow<SyncProgress> = _syncProgress
 
@@ -256,7 +309,13 @@ class ZokaRepository @Inject constructor(
          * pagar el costo en cada pasada.
          */
         private const val ESCANEOS_ENTRE_REINTENTOS_DE_CUERPOS = 10
-        private const val BALANCE_SCAN_SCHEMA_VERSION = 1
+
+        /** Cuanto vale una lectura de pares antes de pasar a "ultimo conocido". */
+        private const val VENTANA_FRESCA_MS = 30_000L
+
+        /** Cuantas lecturas guarda la linea de tendencia. */
+        private const val MUESTRAS_DE_PARES = 40
+        private const val BALANCE_SCAN_SCHEMA_VERSION = 2
         private const val MAX_BALANCE_SCAN_SNAPSHOT_CHARS = 2 * 1024 * 1024
         private const val SAVED_BALANCE_VERIFICATION_ISSUE =
             "Showing a saved balance. Sending stays disabled until the P2P scan verifies the current chain tip."
@@ -691,6 +750,9 @@ class ZokaRepository @Inject constructor(
      * `scannedHeight` ya no es el mismo, la cadena se movió bajo nuestros pies
      * y hay que rehacer el escaneo.
      */
+    /** Una salida nuestra ya descubierta. Se guarda para no volver a descifrarla. */
+    private data class OwnedOutput(val amountAtoms: Long = 0L, val nullifierHex: String = "")
+
     private data class BalanceScanSnapshot(
         val schemaVersion: Int = BALANCE_SCAN_SCHEMA_VERSION,
         val address: String = "",
@@ -699,7 +761,22 @@ class ZokaRepository @Inject constructor(
         val coinbases: List<CoinbaseEntry> = emptyList(),
         val privateTxHashes: List<String> = emptyList(),
         val nullifiers: List<String> = emptyList(),
-        val txTimestamps: Map<String, Long> = emptyMap()
+        val txTimestamps: Map<String, Long> = emptyMap(),
+        /**
+         * El resultado de la fase de cuerpos, para no repetirla.
+         *
+         * Antes la instantanea guardaba solo el avance por bloques, asi que
+         * cada arranque volvia a bajar los 266 cuerpos de la cadena entera para
+         * redescubrir exactamente las mismas salidas. Medido en el telefono: el
+         * recorrido de bloques tardaba dos segundos y esto varios minutos.
+         *
+         * Guardando lo descubierto, un arranque solo procesa las transacciones
+         * nuevas -- normalmente ninguna.
+         */
+        val ownedOutputs: List<OwnedOutput> = emptyList(),
+        val processedTxHashes: List<String> = emptyList(),
+        val ourOutputsByTx: Map<String, Long> = emptyMap(),
+        val txInputNullifiers: Map<String, List<String>> = emptyMap()
     )
 
     private data class FullBalanceScanResult(
@@ -917,6 +994,10 @@ class ZokaRepository @Inject constructor(
         // seguro y no una fuente silenciosa de saldos equivocados.
         var desde = restoreHeight.coerceAtLeast(1L)
         var anclaHash = ""
+        // Solo la instantanea que paso la validacion de ancla sirve para saltear
+        // trabajo. Si el ancla no coincide (reorganizacion), queda en null y se
+        // reprocesa todo.
+        var instantaneaPrevia: BalanceScanSnapshot? = null
         val previa = readBalanceScanSnapshot(address)
         if (previa != null && previa.scannedHeight in desde..chainHeight) {
             val ancla = runCatching {
@@ -932,6 +1013,7 @@ class ZokaRepository @Inject constructor(
                 allInputNullifiers.addAll(previa.nullifiers)
                 txTimestampByHash.putAll(previa.txTimestamps)
                 confirmedInCurrentScan.addAll(previa.privateTxHashes)
+                instantaneaPrevia = previa
                 // Sin esto el avance quedaba en cero hasta el primer punto de
                 // control, y cuando faltan pocos bloques ese punto no llega
                 // nunca: la franja decia "0 de 19279" con el escaneo casi listo.
@@ -1049,7 +1131,6 @@ class ZokaRepository @Inject constructor(
         // Phase 2: Fetch all private txs — collect owned outputs (and, as a
         // supplement to the block-committed set above, any spend nullifiers from
         // the tx bodies we do fetch).
-        data class OwnedOutput(val amountAtoms: Long, val nullifierHex: String)
         val ownedOutputs = mutableListOf<OwnedOutput>()
         // Per-tx data to classify each tx as outgoing (we spent a note of ours)
         // vs incoming (we only received), so Recent Activity can show our sends
@@ -1066,7 +1147,31 @@ class ZokaRepository @Inject constructor(
         // it's our own change output coming back).
         val receivedByTx = mutableListOf<Pair<String, Long>>()
 
-        if (allPrivateTxHashes.isNotEmpty()) {
+        // Lo que ya se descubrio en escaneos anteriores no se vuelve a bajar.
+        //
+        // La instantanea ya se valido contra el ancla de cadena antes de llegar
+        // aca, asi que estos datos pertenecen a la misma rama que estamos
+        // mirando. Si hubo reorganizacion, la instantanea se descarto entera y
+        // este conjunto viene vacio: se reprocesa todo, que es lo correcto.
+        val yaProcesados = mutableSetOf<String>()
+        instantaneaPrevia?.let { previa ->
+            ownedOutputs.addAll(previa.ownedOutputs)
+            for (o in previa.ownedOutputs) ownedByNullifier[o.nullifierHex] = o.amountAtoms
+            ourOutputsByTx.putAll(previa.ourOutputsByTx)
+            for ((h, ns) in previa.txInputNullifiers) txInputNullifiers[h] = ns.toSet()
+            yaProcesados.addAll(previa.processedTxHashes)
+        }
+
+        val hashesPendientes = allPrivateTxHashes.filter { it !in yaProcesados }
+        if (yaProcesados.isNotEmpty()) {
+            Log.d(
+                "ZokaRepository",
+                "scanFullBalance: ${yaProcesados.size} cuerpos ya conocidos, " +
+                    "faltan ${hashesPendientes.size}"
+            )
+        }
+
+        if (hashesPendientes.isNotEmpty()) {
             delay(PRIVATE_TX_PHASE_DELAY_MS)
         }
 
@@ -1079,7 +1184,7 @@ class ZokaRepository @Inject constructor(
         // roughly batch-size-fold. Decryption/bookkeeping below stays
         // single-threaded — only the network fetch runs in parallel.
         var missingTxCount = 0
-        val hashList = allPrivateTxHashes.toList()
+        val hashList = hashesPendientes
         _syncProgress.value = SyncProgress(
             scanning = true,
             scannedHeight = chainHeight,
@@ -1139,6 +1244,44 @@ class ZokaRepository @Inject constructor(
             )
             if (batchStart + PRIVATE_TX_FETCH_BATCH_SIZE < hashList.size) {
                 delay(PRIVATE_TX_BATCH_DELAY_MS)
+            }
+        }
+
+        // El resultado de la fase de cuerpos se guarda ahora, no solo el avance
+        // por bloques.
+        //
+        // Esto es lo que hacia que cerrar la app costara todo el trabajo de
+        // nuevo: la instantanea se escribia ANTES de esta fase, asi que
+        // guardaba que bloques se habian recorrido pero no que se habia
+        // encontrado en ellos. Al volver a abrir, los 266 cuerpos se bajaban
+        // otra vez para redescubrir exactamente lo mismo.
+        //
+        // Se guarda solo si hay ancla: sin ancla no sabemos a que rama
+        // pertenece lo descubierto, y persistirlo seria peor que perderlo.
+        if (anclaHash.isNotBlank()) {
+            runCatching {
+                writeBalanceScanSnapshot(
+                    BalanceScanSnapshot(
+                        address = address,
+                        scannedHeight = chainHeight,
+                        tipHash = anclaHash,
+                        coinbases = myCoinbases.toList(),
+                        privateTxHashes = allPrivateTxHashes.toList(),
+                        nullifiers = allInputNullifiers.toList(),
+                        txTimestamps = txTimestampByHash.toMap(),
+                        ownedOutputs = ownedOutputs.toList(),
+                        // Un cuerpo que no se pudo bajar NO se marca procesado:
+                        // se reintenta la proxima vez, que es justo lo que
+                        // queremos para los que fallaron por red.
+                        processedTxHashes = allPrivateTxHashes
+                            .filter { it in yaProcesados || privateTxCache.containsKey(it) }
+                            .toList(),
+                        ourOutputsByTx = ourOutputsByTx.toMap(),
+                        txInputNullifiers = txInputNullifiers.mapValues { it.value.toList() }
+                    )
+                )
+            }.onFailure {
+                Log.w("ZokaRepository", "no se pudo guardar el resultado del escaneo: ${it.message}")
             }
         }
 

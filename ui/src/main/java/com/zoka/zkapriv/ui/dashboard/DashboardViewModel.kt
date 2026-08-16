@@ -30,6 +30,26 @@ class DashboardViewModel @Inject constructor(
         // El avance del escaneo se refleja apenas cambia, sin esperar a que
         // termine: una espera larga con senal de vida es muy distinta de una
         // pantalla que parece trabada.
+        // El conteo de pares se sondea aparte del escaneo: preguntarlo no viaja
+        // por el canal serializado, asi que no hace cola detras de una descarga
+        // de bloques y puede refrescarse seguido sin frenar nada.
+        viewModelScope.launch {
+            while (true) {
+                zokaRepository.muestrearPares()
+                val t = zokaRepository.peerTelemetry.value
+                val ahora = System.currentTimeMillis()
+                _uiState.update {
+                    it.copy(
+                        peerCount = t.peers,
+                        peerSamples = t.samples,
+                        peerFresh = t.isFresh(ahora),
+                        peerEverObserved = t.everObserved
+                    )
+                }
+                kotlinx.coroutines.delay(INTERVALO_MUESTREO_PARES_MS)
+            }
+        }
+
         viewModelScope.launch {
             zokaRepository.syncProgress.collect { progreso ->
                 _uiState.update {
@@ -68,6 +88,9 @@ class DashboardViewModel @Inject constructor(
     companion object {
         private const val DASHBOARD_REFRESH_THROTTLE_MS = 20_000L
         private const val AUTO_REFRESH_INTERVAL_MS = 30_000L
+
+        /** Cada cuanto se relee el conteo de pares. Barato: es un contador en memoria. */
+        private const val INTERVALO_MUESTREO_PARES_MS = 5_000L
     }
 
     init {
@@ -345,5 +368,10 @@ data class DashboardState(
     val syncChainHeight: Long = 0,
     /** Texto de la fase, para que la franja diga que esta haciendo y no solo cuanto. */
     val syncPhaseLabel: String = "",
-    val syncDetail: String = ""
+    val syncDetail: String = "",
+    /** Pares conectados, su tendencia y si el dato es de ahora o el ultimo conocido. */
+    val peerCount: Int = 0,
+    val peerSamples: List<Int> = emptyList(),
+    val peerFresh: Boolean = false,
+    val peerEverObserved: Boolean = false
 )

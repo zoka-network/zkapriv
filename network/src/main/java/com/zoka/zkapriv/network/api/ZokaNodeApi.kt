@@ -23,6 +23,18 @@ interface ZokaNodeApi {
     @GET("health")
     suspend fun health(): ZokaHealthResponse
 
+    /**
+     * Cuantos pares hay ahora mismo, no solo si hay alguno.
+     *
+     * La app ya leia este estado pero se quedaba con el booleano. Con un solo
+     * par la wallet funciona y se cuelga cada vez que ese par tarda; con tres
+     * puede rotar. Es una diferencia que el usuario merece ver.
+     *
+     * Devuelve null si no se pudo leer: un conteo viejo presentado como actual
+     * es peor que admitir que no sabemos.
+     */
+    suspend fun peerCount(): Int?
+
     @GET("stats")
     suspend fun getStats(): ZokaStatsResponse
 

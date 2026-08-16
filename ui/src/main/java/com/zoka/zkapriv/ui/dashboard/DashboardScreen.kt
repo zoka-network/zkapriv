@@ -40,6 +40,12 @@ import com.zoka.zkapriv.core.model.TransactionStatus
 import com.zoka.zkapriv.ui.components.LucideIcons
 import java.text.NumberFormat
 import java.util.*
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -314,7 +320,11 @@ fun DashboardScreen(
                         syncScannedHeight = uiState.syncScannedHeight,
                         syncChainHeight = uiState.syncChainHeight,
                         syncPhaseLabel = uiState.syncPhaseLabel,
-                        syncDetail = uiState.syncDetail
+                        syncDetail = uiState.syncDetail,
+                        peerCount = uiState.peerCount,
+                        peerSamples = uiState.peerSamples,
+                        peerFresh = uiState.peerFresh,
+                        peerEverObserved = uiState.peerEverObserved
                     )
                 }
 
@@ -489,7 +499,11 @@ private fun Web3BalanceCard(
     syncScannedHeight: Long = 0,
     syncChainHeight: Long = 0,
     syncPhaseLabel: String = "",
-    syncDetail: String = ""
+    syncDetail: String = "",
+    peerCount: Int = 0,
+    peerSamples: List<Int> = emptyList(),
+    peerFresh: Boolean = false,
+    peerEverObserved: Boolean = false
 ) {
     val displayUsdValue = if (totalPortfolioValue > 0) totalPortfolioValue else usdValue
     val hasUsdPrice = currentPrice > 0.0
@@ -701,6 +715,17 @@ private fun Web3BalanceCard(
                             )
                         }
                     }
+                }
+
+                if (!isBalanceHidden) {
+                    PeerConnectionRow(
+                        peerCount = peerCount,
+                        samples = peerSamples,
+                        fresh = peerFresh,
+                        everObserved = peerEverObserved,
+                        textSecondary = textSecondary,
+                        accentColor = accentColor
+                    )
                 }
 
                 // Senal de vida del escaneo.
@@ -2077,6 +2102,116 @@ private fun ModernNavItem(
             color = if (isSelected) selectedContent else unselectedColor,
             maxLines = 1,
             fontSize = 10.sp
+        )
+    }
+}
+
+
+/**
+ * Linea de tendencia de los pares conectados.
+ *
+ * Chica a proposito: acompaña al numero, no lo reemplaza. Lo que importa es si
+ * el conteo se sostiene o se cae, y para eso alcanzan cuarenta muestras en
+ * cuarenta pixeles de ancho.
+ *
+ * Con una sola muestra no dibuja nada: dos puntos hacen una linea, uno solo
+ * haria una recta plana que parece historia y no lo es.
+ */
+@Composable
+private fun PeerSparkline(
+    samples: List<Int>,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    if (samples.size < 2) {
+        Spacer(modifier = modifier)
+        return
+    }
+    val maximo = (samples.maxOrNull() ?: 0).coerceAtLeast(1)
+    Canvas(modifier = modifier) {
+        val pasoX = if (samples.size > 1) size.width / (samples.size - 1) else size.width
+        var anteriorX = 0f
+        var anteriorY = size.height - (samples[0].toFloat() / maximo) * size.height
+        for (i in 1 until samples.size) {
+            val x = pasoX * i
+            val y = size.height - (samples[i].toFloat() / maximo) * size.height
+            drawLine(
+                color = color,
+                start = Offset(anteriorX, anteriorY),
+                end = Offset(x, y),
+                strokeWidth = 2f,
+                cap = StrokeCap.Round
+            )
+            anteriorX = x
+            anteriorY = y
+        }
+    }
+}
+
+/**
+ * Estado de la conexion a la red.
+ *
+ * Sigue el criterio de ZSilent: un conteo de pares sin fecha miente. El numero
+ * se actualiza cuando el nodo bombea eventos, asi que si esta ocupado el dato
+ * envejece -- y mostrarlo como actual haria creer que hay red cuando puede no
+ * haberla. Por eso hay tres estados y no dos: en vivo, ultimo conocido, y
+ * nunca leido.
+ *
+ * Un solo par se marca distinto a proposito. Con uno la wallet anda pero se
+ * cuelga cada vez que ese par tarda; recien con dos puede rotar. Es la
+ * diferencia entre "conectado" y "conectado y a salvo".
+ */
+@Composable
+private fun PeerConnectionRow(
+    peerCount: Int,
+    samples: List<Int>,
+    fresh: Boolean,
+    everObserved: Boolean,
+    textSecondary: Color,
+    accentColor: Color
+) {
+    val colorEstado = when {
+        !everObserved -> textSecondary
+        !fresh -> textSecondary
+        peerCount <= 0 -> Color(0xFFE53935)
+        peerCount == 1 -> Color(0xFFFF9800)
+        else -> accentColor
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Canvas(modifier = Modifier.size(7.dp)) {
+            drawCircle(color = colorEstado)
+        }
+        Text(
+            text = when {
+                !everObserved -> "Network not reported"
+                peerCount <= 0 -> "No peers"
+                peerCount == 1 -> "1 peer"
+                else -> "$peerCount peers"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = textSecondary
+        )
+        Text(
+            text = when {
+                !everObserved -> ""
+                !fresh -> "· last known"
+                peerCount == 1 -> "· no fallback"
+                else -> ""
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = textSecondary.copy(alpha = 0.6f)
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        PeerSparkline(
+            samples = samples,
+            color = colorEstado.copy(alpha = if (fresh) 0.9f else 0.35f),
+            modifier = Modifier
+                .width(44.dp)
+                .height(14.dp)
         )
     }
 }
