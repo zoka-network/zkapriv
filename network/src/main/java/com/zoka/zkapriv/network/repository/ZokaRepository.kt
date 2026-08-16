@@ -327,15 +327,25 @@ class ZokaRepository @Inject constructor(
         private const val BATCH_DELAY_MS = 80L
         /** Cada cuantos bloques se anota el avance del escaneo. */
         private const val BLOQUES_ENTRE_PUNTOS_DE_CONTROL = 1_000L
-        private const val PRIVATE_TX_PHASE_DELAY_MS = 2_000L
-        private const val PRIVATE_TX_DELAY_MS = 350L
+        // Estas esperas son herencia de HTTP y aca ya no compran nada.
+        //
+        // Venian del explorador web pegandole al mismo nodo por REST, donde el
+        // limitador de peticiones era real. Esta app habla P2P directo contra
+        // un par, y ademas los pedidos pasan por un mutex que los serializa
+        // uno por uno: no hay avalancha posible que haya que frenar.
+        //
+        // Con 266 transacciones, 350 ms por tanda eran mas de veinte segundos
+        // de espera pura contra un limitador que no existe en este camino. El
+        // reintento por 429 sigue en su lugar por si algun par si limita.
+        private const val PRIVATE_TX_PHASE_DELAY_MS = 250L
+        private const val PRIVATE_TX_DELAY_MS = 0L
         private val PRIVATE_TX_RETRY_DELAYS_MS = longArrayOf(8_000L, 20_000L)
-        // Concurrent tx-body fetches per batch during a full balance scan.
-        // Mirrors the batch size the web explorer already uses against the
-        // same node (src/lib/api.ts, scanPrivateKey) without tripping its
-        // rate limiter.
-        private const val PRIVATE_TX_FETCH_BATCH_SIZE = 6
-        private const val PRIVATE_TX_BATCH_DELAY_MS = 150L
+        // La tanda no gana paralelismo -- el mutex serializa los pedidos igual
+        // --, pero si amortiza la pausa entre tandas y hace que el avance en
+        // pantalla no salte de a seis. Subirla no carga mas al par: la cola es
+        // la misma, solo se pide con menos pausas en el medio.
+        private const val PRIVATE_TX_FETCH_BATCH_SIZE = 24
+        private const val PRIVATE_TX_BATCH_DELAY_MS = 0L
     }
 
     data class BalanceInfo(
@@ -1243,7 +1253,7 @@ class ZokaRepository @Inject constructor(
                 bodiesTotal = hashList.size
             )
             if (batchStart + PRIVATE_TX_FETCH_BATCH_SIZE < hashList.size) {
-                delay(PRIVATE_TX_BATCH_DELAY_MS)
+                if (PRIVATE_TX_BATCH_DELAY_MS > 0L) delay(PRIVATE_TX_BATCH_DELAY_MS)
             }
         }
 
@@ -1389,7 +1399,7 @@ class ZokaRepository @Inject constructor(
         privateTxCache[txHash]?.let { return it }
         if (txHash in missingPrivateTxCache) return null
 
-        delay(PRIVATE_TX_DELAY_MS)
+        if (PRIVATE_TX_DELAY_MS > 0L) delay(PRIVATE_TX_DELAY_MS)
         return try {
             zokaNodeApi.getPrivateTransaction(txHash)
                 .also { privateTxCache[txHash] = it }
