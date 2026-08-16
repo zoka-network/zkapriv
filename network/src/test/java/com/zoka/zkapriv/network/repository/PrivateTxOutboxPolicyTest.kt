@@ -75,6 +75,55 @@ class PrivateTxOutboxPolicyTest {
         assertFalse(verified.isVerifiedAtTip(50L, "other-branch"))
     }
 
+    /**
+     * Un cuerpo que falta no puede inflar el saldo, asi que no debe bloquear el
+     * envio.
+     *
+     * Los gastos se detectan por nulificador y los nulificadores llegan
+     * commiteados en el bloque, sin pedir cuerpos. Un cuerpo perdido solo puede
+     * ocultar dinero ENTRANTE: deja el saldo por debajo del real, nunca por
+     * encima. Gastar de menos es seguro.
+     *
+     * La version anterior exigia cero cuerpos faltantes y dejaba la wallet sin
+     * poder enviar para siempre, porque doce de esas transacciones ya no existen
+     * en ningun nodo vivo. Esta prueba existe para que ese endurecimiento no
+     * vuelva "por las dudas".
+     */
+    @Test
+    fun missingBodiesWarnButDoNotBlockSpendingBecauseTheyCanOnlyUndercountFunds() {
+        val conCuerposPerdidos = ZokaRepository.BalanceInfo(
+            1_000L,
+            0L,
+            scannedHeight = 50L,
+            isVerified = true,
+            verifiedTipHash = "tip-50",
+            missingTxCount = 12
+        )
+
+        assertTrue(
+            "doce cuerpos irrecuperables no deben impedir gastar lo que si conocemos",
+            conCuerposPerdidos.isVerifiedAtTip(50L, "tip-50")
+        )
+    }
+
+    /**
+     * Lo que si tiene que bloquear: un saldo que no se pudo anclar a una punta
+     * de cadena. Ahi no sabemos de cuando es, y podria estar contando notas ya
+     * gastadas.
+     */
+    @Test
+    fun aBalanceWithNoChainAnchorStillFailsClosed() {
+        val sinAncla = ZokaRepository.BalanceInfo(
+            1_000L,
+            0L,
+            scannedHeight = 50L,
+            isVerified = false,
+            verifiedTipHash = ""
+        )
+
+        assertFalse(sinAncla.isVerifiedAtTip(50L, "tip-50"))
+    }
+
     @Test
     fun repositoryRetryPublishesStoredBodyAndNeverInvokesTheProver() {
         mockStatic(Log::class.java).use {

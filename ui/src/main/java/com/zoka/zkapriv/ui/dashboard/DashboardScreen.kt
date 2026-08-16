@@ -763,10 +763,24 @@ private fun Web3BalanceCard(
                     }
                 }
 
-                if (!isLoading && !isBalanceHidden && !isBalanceVerified) {
+                // Dos avisos distintos, porque son dos problemas distintos.
+                //
+                // Sin anclar a la cadena: el saldo no es confiable y no se puede
+                // gastar -- eso es un error, va en rojo.
+                //
+                // Con cuerpos faltantes pero anclado: el saldo es gastable, solo
+                // que podria haber dinero entrante que no vemos. Eso es una
+                // advertencia, no un error, y pintarlo de rojo hacia que pareciera
+                // que la wallet estaba rota cuando estaba funcionando bien.
+                if (!isLoading && !isBalanceHidden && (!isBalanceVerified || isBalanceIncomplete)) {
+                    val esBloqueante = !isBalanceVerified
                     Surface(
                         shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.errorContainer
+                        color = if (esBloqueante) {
+                            MaterialTheme.colorScheme.errorContainer
+                        } else {
+                            Color(0xFFFF9800).copy(alpha = 0.12f)
+                        }
                     ) {
                         Row(
                             modifier = Modifier
@@ -778,7 +792,11 @@ private fun Web3BalanceCard(
                             Icon(
                                 Icons.Outlined.Warning,
                                 contentDescription = "Incomplete balance",
-                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                                tint = if (esBloqueante) {
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                } else {
+                                    Color(0xFFFF9800)
+                                },
                                 modifier = Modifier.size(16.dp)
                             )
                             Text(
@@ -790,7 +808,11 @@ private fun Web3BalanceCard(
                                     "This saved balance has not been verified at the current P2P chain tip."
                                 },
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onErrorContainer
+                                color = if (esBloqueante) {
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                } else {
+                                    textSecondary
+                                }
                             )
                         }
                     }

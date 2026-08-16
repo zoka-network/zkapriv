@@ -882,6 +882,10 @@ class ZokaRepository @Inject constructor(
                 allInputNullifiers.addAll(previa.nullifiers)
                 txTimestampByHash.putAll(previa.txTimestamps)
                 confirmedInCurrentScan.addAll(previa.privateTxHashes)
+                // Sin esto el avance quedaba en cero hasta el primer punto de
+                // control, y cuando faltan pocos bloques ese punto no llega
+                // nunca: la franja decia "0 de 19279" con el escaneo casi listo.
+                _syncProgress.value = SyncProgress(true, previa.scannedHeight, chainHeight)
                 Log.d(
                     "ZokaRepository",
                     "scanFullBalance: retomando desde $desde (instantánea en ${previa.scannedHeight})"
@@ -1127,17 +1131,43 @@ class ZokaRepository @Inject constructor(
                 immatureAtoms = immatureAtoms,
                 missingTxCount = missingTxCount,
                 scannedHeight = chainHeight,
-                isVerified = missingTxCount == 0 && anclaHash.isNotBlank(),
+                // Un cuerpo que falta NO puede inflar este saldo.
+                //
+                // La guarda anterior exigia `missingTxCount == 0` y bloqueaba el
+                // envio para siempre, porque 12 de esas 266 transacciones ya no
+                // existen en ningun nodo vivo. Estaba protegiendo contra el
+                // riesgo equivocado.
+                //
+                // Los gastos se detectan por nulificador, y los nulificadores
+                // vienen commiteados en el bloque -- llegan en los resumenes,
+                // sin pedir un solo cuerpo. Una nota nuestra no puede figurar
+                // como gastable porque un cuerpo no se haya podido bajar.
+                //
+                // Un cuerpo sirve para lo otro: descubrir salidas nuestras, o
+                // sea dinero ENTRANTE. Perderse uno solo puede dejar el saldo
+                // por DEBAJO del real, nunca por encima. Y gastar de menos es
+                // seguro: la transaccion que armamos con lo que si conocemos es
+                // valida igual.
+                //
+                // Asi que los cuerpos faltantes se avisan -- el saldo puede ser
+                // incompleto y el usuario merece saberlo -- pero no bloquean el
+                // envio. Lo que si lo bloquea es no poder anclar el saldo a una
+                // punta de cadena, porque ahi no sabemos de cuando es nada.
+                isVerified = anclaHash.isNotBlank(),
                 verifiedTipHash = anclaHash,
-                verificationIssue = if (missingTxCount > 0) {
+                verificationIssue = if (anclaHash.isBlank()) {
+                    "The P2P scan could not anchor this balance to a chain tip."
+                } else if (missingTxCount > 0) {
                     "$missingTxCount private transaction " +
                         if (missingTxCount == 1) {
-                            "body is still unavailable from the P2P network."
+                            "body is unavailable from the P2P network, so any " +
+                                "funds it may have sent you are not counted here. " +
+                                "You can still spend the balance shown."
                         } else {
-                            "bodies are still unavailable from the P2P network."
+                            "bodies are unavailable from the P2P network, so any " +
+                                "funds they may have sent you are not counted here. " +
+                                "You can still spend the balance shown."
                         }
-                } else if (anclaHash.isBlank()) {
-                    "The P2P scan could not anchor this balance to a chain tip."
                 } else {
                     null
                 }
