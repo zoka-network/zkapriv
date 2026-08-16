@@ -25,6 +25,24 @@ class DashboardViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DashboardState())
+
+    init {
+        // El avance del escaneo se refleja apenas cambia, sin esperar a que
+        // termine: una espera larga con senal de vida es muy distinta de una
+        // pantalla que parece trabada.
+        viewModelScope.launch {
+            zokaRepository.syncProgress.collect { progreso ->
+                _uiState.update {
+                    it.copy(
+                        syncing = progreso.scanning,
+                        syncFraction = progreso.fraction,
+                        syncScannedHeight = progreso.scannedHeight,
+                        syncChainHeight = progreso.chainHeight
+                    )
+                }
+            }
+        }
+    }
     val uiState: StateFlow<DashboardState> = _uiState
     private var walletLoadJob: Job? = null
     private var lastWalletLoadStartedAt = 0L
@@ -301,5 +319,10 @@ data class DashboardState(
     val isBalanceIncomplete: Boolean = false,
     val isBalanceVerified: Boolean = false,
     val balanceVerificationIssue: String? = null,
-    val missingTxCount: Int = 0
+    val missingTxCount: Int = 0,
+    /** En que anda el escaneo. Sin esto la pantalla no distingue "trabajando" de "colgado". */
+    val syncing: Boolean = false,
+    val syncFraction: Float? = null,
+    val syncScannedHeight: Long = 0,
+    val syncChainHeight: Long = 0
 )

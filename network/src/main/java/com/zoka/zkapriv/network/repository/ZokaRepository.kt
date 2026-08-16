@@ -135,6 +135,31 @@ class ZokaRepository @Inject constructor(
     // ConcurrentHashMap-backed because batched parallel fetches in scanFullBalance
     // write to these from multiple coroutines at once.
     private val privateTxCache = java.util.concurrent.ConcurrentHashMap<String, ZokaPrivateTransactionResponse>()
+    /**
+     * En que anda el escaneo, para que la interfaz no vaya a ciegas.
+     *
+     * El avance existia solo en el registro: la aplicacion sabia perfectamente
+     * en que bloque iba y el usuario no. Mostraba el resultado -- "saldo sin
+     * verificar" -- pero nunca el proceso, asi que una espera larga y una
+     * pantalla colgada se veian igual.
+     */
+    data class SyncProgress(
+        val scanning: Boolean,
+        val scannedHeight: Long = 0,
+        val chainHeight: Long = 0
+    ) {
+        /** Fraccion escaneada, o `null` si todavia no se sabe hasta donde hay que ir. */
+        val fraction: Float?
+            get() = if (chainHeight > 0 && scannedHeight in 0..chainHeight) {
+                (scannedHeight.toFloat() / chainHeight.toFloat()).coerceIn(0f, 1f)
+            } else {
+                null
+            }
+    }
+
+    private val _syncProgress = kotlinx.coroutines.flow.MutableStateFlow(SyncProgress(false))
+    val syncProgress: kotlinx.coroutines.flow.StateFlow<SyncProgress> = _syncProgress
+
     private val missingPrivateTxCache = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /**
@@ -777,6 +802,11 @@ class ZokaRepository @Inject constructor(
     ): FullBalanceScanResult {
         val scanStartedAtMs = System.currentTimeMillis()
         Log.d("ZokaRepository", "scanFullBalance: START chainHeight=$chainHeight restoreHeight=$restoreHeight")
+        _syncProgress.value = SyncProgress(
+            scanning = true,
+            scannedHeight = restoreHeight.coerceAtLeast(0L),
+            chainHeight = chainHeight
+        )
         // This set describes the current scan only. Keeping entries from a
         // previous branch would let a reorg release a pending reservation and
         // delete the only replayable transaction body.
@@ -935,6 +965,7 @@ class ZokaRepository @Inject constructor(
                     )
                 )
                 ultimoGuardado = to
+                _syncProgress.value = SyncProgress(true, to, chainHeight)
                 Log.d(
                     "ZokaRepository",
                     "scanFullBalance: avance $to/$chainHeight " +
@@ -1088,6 +1119,7 @@ class ZokaRepository @Inject constructor(
         recordOutgoingTransactions(address, sentByTx, txTimestampByHash)
 
         val elapsedMs = System.currentTimeMillis() - scanStartedAtMs
+        _syncProgress.value = SyncProgress(false, chainHeight, chainHeight)
         Log.d("ZokaRepository", "scanFullBalance: DONE in ${elapsedMs}ms coinbases=${myCoinbases.size} privateTxs=${allPrivateTxHashes.size} ownedOutputs=${ownedOutputs.size} missingTxs=$missingTxCount mature=$matureAtoms immature=$immatureAtoms")
         return FullBalanceScanResult(
             balance = BalanceInfo(

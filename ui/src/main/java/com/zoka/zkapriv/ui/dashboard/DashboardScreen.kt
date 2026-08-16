@@ -308,7 +308,11 @@ fun DashboardScreen(
                         isBalanceIncomplete = uiState.isBalanceIncomplete,
                         isBalanceVerified = uiState.isBalanceVerified,
                         balanceVerificationIssue = uiState.balanceVerificationIssue,
-                        missingTxCount = uiState.missingTxCount
+                        missingTxCount = uiState.missingTxCount,
+                        syncing = uiState.syncing,
+                        syncFraction = uiState.syncFraction,
+                        syncScannedHeight = uiState.syncScannedHeight,
+                        syncChainHeight = uiState.syncChainHeight
                     )
                 }
 
@@ -477,7 +481,11 @@ private fun Web3BalanceCard(
     isBalanceIncomplete: Boolean = false,
     isBalanceVerified: Boolean = false,
     balanceVerificationIssue: String? = null,
-    missingTxCount: Int = 0
+    missingTxCount: Int = 0,
+    syncing: Boolean = false,
+    syncFraction: Float? = null,
+    syncScannedHeight: Long = 0,
+    syncChainHeight: Long = 0
 ) {
     val displayUsdValue = if (totalPortfolioValue > 0) totalPortfolioValue else usdValue
     val hasUsdPrice = currentPrice > 0.0
@@ -686,6 +694,70 @@ private fun Web3BalanceCard(
                                 value = "$pendingOutBalance ZKA",
                                 valueColor = Color(0xFFFFC107),
                                 labelColor = textSecondary
+                            )
+                        }
+                    }
+                }
+
+                // Senal de vida del escaneo.
+                //
+                // La tarjeta ya avisaba cuando el saldo no estaba verificado --
+                // el resultado -- pero nunca mostraba el proceso, asi que una
+                // espera larga y una pantalla trabada se veian igual. Esto es
+                // deliberadamente discreto: una linea fina y texto secundario,
+                // porque acompana al saldo, no compite con el.
+                if (syncing && !isBalanceHidden) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Syncing with the network",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = textSecondary
+                            )
+                            // El porcentaje solo cuando se sabe hasta donde hay
+                            // que llegar: un numero inventado es peor que
+                            // ninguno.
+                            syncFraction?.let { avance ->
+                                Text(
+                                    text = "${(avance * 100).toInt()}%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = textSecondary
+                                )
+                            }
+                        }
+                        if (syncFraction != null) {
+                            LinearProgressIndicator(
+                                progress = syncFraction,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(2.dp),
+                                color = accentColor,
+                                trackColor = textSecondary.copy(alpha = 0.15f)
+                            )
+                        } else {
+                            // Sin fraccion conocida, una barra indeterminada:
+                            // sigue diciendo "estoy trabajando" sin afirmar
+                            // cuanto falta.
+                            LinearProgressIndicator(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(2.dp),
+                                color = accentColor,
+                                trackColor = textSecondary.copy(alpha = 0.15f)
+                            )
+                        }
+                        if (syncChainHeight > 0) {
+                            Text(
+                                text = "Block $syncScannedHeight of $syncChainHeight",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = textSecondary.copy(alpha = 0.7f)
                             )
                         }
                     }
