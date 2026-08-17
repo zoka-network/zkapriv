@@ -331,6 +331,29 @@ pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeNetw
     })
 }
 
+/// Muchos cuerpos de una sola vez: `{"bodies":{hash:cuerpo},"missing":[hash]}`.
+///
+/// Recibe los hashes como un JSON array, no como varargs, porque son cientos y
+/// cruzar la frontera JNI una vez por hash seria repetir el problema que este
+/// camino existe para resolver.
+#[no_mangle]
+pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeNetwork_privateTxBodies0(
+    mut env: JNIEnv,
+    _class: JClass,
+    tx_hashes_json: JString,
+) -> jstring {
+    responder_json(
+        &mut env,
+        tx_hashes_json,
+        "la busqueda de cuerpos en lote entro en panico",
+        |json| {
+            let hashes: Vec<String> = serde_json::from_str(json)
+                .map_err(|e| format!("la lista de hashes no es un JSON array valido: {e}"))?;
+            zoka::mobile_net::private_tx_bodies_json(&hashes)
+        },
+    )
+}
+
 /// Levanta Tor dentro de la app y devuelve la direccion del proxy SOCKS5 local.
 ///
 /// El nodo la recibe despues en `connect`, igual que recibiria la del Tor del

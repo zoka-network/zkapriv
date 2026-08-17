@@ -1,5 +1,6 @@
 package com.zoka.zkapriv.network.api
 
+import com.zoka.zkapriv.network.model.PrivateTxBatchResult
 import com.zoka.zkapriv.network.model.ZokaAccountResponse
 import com.zoka.zkapriv.network.model.ZokaBlockResponse
 import com.zoka.zkapriv.network.model.ZokaChainHeightResponse
@@ -91,6 +92,25 @@ interface ZokaNodeApi {
     /// input, so this returns the untouched JSON object.
     @GET("private/tx/{hash}")
     suspend fun getPrivateTransactionRaw(@Path("hash") hash: String): com.google.gson.JsonObject
+
+    /**
+     * Muchos cuerpos en un solo viaje.
+     *
+     * Devuelve los que se consiguieron y, aparte, los que ningún par tenía. Los
+     * faltantes van explícitos porque un cuerpo que nadie tiene no es un fallo
+     * de red: hay transacciones cuyo cuerpo se perdió de la malla, y hay que
+     * poder dejar de pedirlas.
+     *
+     * Existe porque el camino de a uno era todo el tiempo de arranque de la
+     * wallet: 266 transacciones privadas eran 266 idas y vueltas por Tor,
+     * serializadas por el candado nativo.
+     *
+     * Devuelve `null` si esta vía no está disponible, para que quien llama caiga
+     * al camino de a uno en vez de quedarse sin saldo.
+     */
+    suspend fun getPrivateTransactionsBatch(
+        hashes: List<String>
+    ): PrivateTxBatchResult?
 
     /// Build, sign and broadcast a Zoka private transaction on behalf of
     /// the client. The body carries the encrypted BIP-39 entropy; the node

@@ -53,6 +53,8 @@ internal object MobileNativeTimeoutPolicy {
     private const val MOBILE_PEER_WAIT_MS = 90_000L
     private const val MOBILE_CHUNK_WAIT_MS = 60_000L
     private const val MOBILE_CALL_SLACK_MS = 15_000L
+    /** Cuantos cuerpos entran en un pedido del lado nativo. */
+    private const val MAX_BODIES_PER_REQUEST = 100
     private const val MOBILE_DIGESTS_BATCH_SIZE = 1_000L
     private const val MOBILE_BLOCKS_BATCH_SIZE = 32L
     private const val KOTLIN_JNI_DELIVERY_SLACK_MS = 15_000L
@@ -60,6 +62,22 @@ internal object MobileNativeTimeoutPolicy {
     fun privateTxBodyMs(): Long = outerTimeout(
         saturatingAdd(MOBILE_PEER_WAIT_MS, MOBILE_CHUNK_WAIT_MS)
     )
+
+    /**
+     * Plazo de un pedido en lote, espejo del `private_bodies_call_timeout` del
+     * motor.
+     *
+     * Escala con la cantidad -- el que responde tiene que leer y comprimir todo
+     * antes de contestar -- pero muy por debajo de pedirlos de a uno, donde cada
+     * cuerpo pagaba su propia espera de par.
+     */
+    fun privateTxBodiesMs(cuantos: Int): Long {
+        val lotes = ((cuantos + MAX_BODIES_PER_REQUEST - 1) / MAX_BODIES_PER_REQUEST)
+            .coerceIn(1, 8)
+        return outerTimeout(
+            saturatingAdd(MOBILE_PEER_WAIT_MS, MOBILE_CHUNK_WAIT_MS * lotes)
+        )
+    }
 
     fun rawBlocksMs(from: Long, to: Long): Long {
         val blocks = rangeSize(from, to)
@@ -172,6 +190,35 @@ class P2pZokaNodeApi(
     private fun conectada(): Boolean =
         runCatching { leerJson(red.status()).get("connected")?.asBoolean == true }
             .getOrDefault(false)
+
+    override suspend fun getPrivateTransactionsBatch(
+        hashes: List<String>
+    ): com.zoka.zkapriv.network.model.PrivateTxBatchResult? = withContext(Dispatchers.IO) {
+        if (hashes.isEmpty()) {
+            return@withContext com.zoka.zkapriv.network.model.PrivateTxBatchResult(
+                emptyMap(),
+                emptyList()
+            )
+        }
+        asegurarRed()
+        val json = processNativeCommandGate.run(
+            MobileNativeTimeoutPolicy.privateTxBodiesMs(hashes.size)
+        ) {
+            leerJson(red.privateTxBodies(hashes))
+        }
+        val bodies = LinkedHashMap<String, ZokaPrivateTransactionResponse>()
+        json.getAsJsonObject("bodies")?.entrySet()?.forEach { (hash, valor) ->
+            // Cada cuerpo llega como el JSON de la transaccion en un string: el
+            // motor ya lo valido contra su hash canonico antes de entregarlo.
+            runCatching {
+                gson.fromJson(valor.asString, ZokaPrivateTransactionResponse::class.java)
+            }.getOrNull()?.let { bodies[hash] = it }
+        }
+        val missing = json.getAsJsonArray("missing")
+            ?.mapNotNull { runCatching { it.asString }.getOrNull() }
+            ?: emptyList()
+        com.zoka.zkapriv.network.model.PrivateTxBatchResult(bodies, missing)
+    }
 
     override suspend fun peerCount(): Int? = withContext(Dispatchers.IO) {
         // El estado no viaja por el canal serializado a proposito, asi que

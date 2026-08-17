@@ -340,11 +340,14 @@ class ZokaRepository @Inject constructor(
         private const val PRIVATE_TX_PHASE_DELAY_MS = 250L
         private const val PRIVATE_TX_DELAY_MS = 0L
         private val PRIVATE_TX_RETRY_DELAYS_MS = longArrayOf(8_000L, 20_000L)
-        // La tanda no gana paralelismo -- el mutex serializa los pedidos igual
-        // --, pero si amortiza la pausa entre tandas y hace que el avance en
-        // pantalla no salte de a seis. Subirla no carga mas al par: la cola es
-        // la misma, solo se pide con menos pausas en el medio.
-        private const val PRIVATE_TX_FETCH_BATCH_SIZE = 24
+        // La tanda no gana paralelismo: el mutex nativo serializa los pedidos
+        // igual. Subirla a 24 fue un error -- no acelero nada y agrando el
+        // bloque de espera antes de cada senal de vida.
+        //
+        // Ahora el avance se publica por cuerpo, asi que el tamano solo decide
+        // cada cuanto se anota lo descubierto. Ocho es corto para que un corte
+        // pierda poco.
+        private const val PRIVATE_TX_FETCH_BATCH_SIZE = 8
         private const val PRIVATE_TX_BATCH_DELAY_MS = 0L
 
         /** Cada cuantas tandas de cuerpos se anota lo descubierto. */
@@ -1194,6 +1197,45 @@ class ZokaRepository @Inject constructor(
         }
 
         val hashesPendientes = allPrivateTxHashes.filter { it !in yaProcesados }
+
+        // Traer los cuerpos en lote antes de recorrerlos.
+        //
+        // Esta es la diferencia entre una wallet que sincroniza y una que no.
+        // El camino de a uno pedia 266 cuerpos en 266 idas y vueltas por Tor,
+        // serializadas por el candado nativo, y en eso se iba todo el arranque.
+        // El protocolo en lote los trae en unos pocos viajes, comprimidos.
+        //
+        // Lo que llega queda en el cache del motor, asi que el recorrido de
+        // abajo no cambia: pide igual, pero ya no sale a la red. Si esta via
+        // falla se sigue de largo y cada cuerpo se pide como antes -- mas lento,
+        // pero funciona, y esa es la razon de que el camino viejo siga estando.
+        if (hashesPendientes.isNotEmpty()) {
+            val traidos = runCatching {
+                zokaNodeApi.getPrivateTransactionsBatch(hashesPendientes)
+            }.onFailure {
+                Log.w("ZokaRepository", "el lote de cuerpos fallo, sigo de a uno: ${it.message}")
+            }.getOrNull()
+
+            if (traidos != null) {
+                for ((hash, cuerpo) in traidos.bodies) {
+                    privateTxCache[hash] = cuerpo
+                }
+                // Un cuerpo que los pares dijeron que no tienen se anota como
+                // irrecuperable, para no volver a pedirlo en cada arranque. El
+                // reintento periodico cada diez escaneos sigue existiendo: "no
+                // existe" no puede ser para siempre si la red lo recupera.
+                for (hash in traidos.missing) {
+                    missingPrivateTxCache.add(hash)
+                }
+                if (traidos.missing.isNotEmpty()) guardarCuerposPerdidos()
+                Log.d(
+                    "ZokaRepository",
+                    "lote de cuerpos: ${traidos.bodies.size} traidos, " +
+                        "${traidos.missing.size} que ningun par tiene, " +
+                        "de ${hashesPendientes.size} pedidos"
+                )
+            }
+        }
         if (yaProcesados.isNotEmpty()) {
             Log.d(
                 "ZokaRepository",
@@ -1268,9 +1310,30 @@ class ZokaRepository @Inject constructor(
                 batchStart,
                 minOf(batchStart + PRIVATE_TX_FETCH_BATCH_SIZE, hashList.size)
             )
+            // El avance se publica por cuerpo, no al cerrar la tanda.
+            //
+            // Los pedidos estan serializados por el mutex nativo, asi que una
+            // tanda de 24 tarda 24 idas y vueltas por Tor. Publicando solo al
+            // final, la pantalla se quedaba en "0 of 266" durante todo ese rato
+            // y parecia trabada. Subir la tanda -- que hice creyendo que
+            // amortizaba pausas -- empeoro justo eso.
+            var hechosEnLaTanda = 0
             val fetched = coroutineScope {
-                batch.map { txHash -> async { txHash to getPrivateTransactionCached(txHash) } }
-                    .awaitAll()
+                batch.map { txHash ->
+                    async {
+                        val r = txHash to getPrivateTransactionCached(txHash)
+                        hechosEnLaTanda++
+                        _syncProgress.value = SyncProgress(
+                            scanning = true,
+                            scannedHeight = chainHeight,
+                            chainHeight = chainHeight,
+                            phase = SyncProgress.Phase.BODIES,
+                            bodiesDone = batchStart + hechosEnLaTanda,
+                            bodiesTotal = hashList.size
+                        )
+                        r
+                    }
+                }.awaitAll()
             }
             for ((txHash, privateTx) in fetched) {
                 if (privateTx == null) {

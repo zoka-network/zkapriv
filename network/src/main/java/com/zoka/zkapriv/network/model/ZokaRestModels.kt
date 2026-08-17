@@ -268,3 +268,16 @@ data class ZokaPrivateOutputModel(
     @SerializedName("is_change")
     val isChange: Boolean = false
 )
+
+
+/**
+ * Lo que volvió de un pedido de cuerpos en lote.
+ *
+ * `missing` no es lo mismo que "no vino": son los cuerpos que los pares dijeron
+ * explícitamente que no tienen. Esa diferencia es la que permite dejar de
+ * pedirlos sin confundir una pérdida real con un problema de red.
+ */
+data class PrivateTxBatchResult(
+    val bodies: Map<String, ZokaPrivateTransactionResponse>,
+    val missing: List<String>
+)

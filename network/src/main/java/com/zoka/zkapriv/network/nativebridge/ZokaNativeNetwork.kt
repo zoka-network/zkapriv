@@ -174,6 +174,24 @@ object ZokaNativeNetwork {
         return privateTxBody0(txHash)
     }
 
+    /**
+     * Muchos cuerpos en un solo viaje.
+     *
+     * Devuelve `{"bodies":{hash:cuerpo},"missing":[hash]}`. Los faltantes van
+     * explícitos: un cuerpo que ningún par tiene no es un fallo de red, y quien
+     * llama necesita distinguirlo para no reintentarlo para siempre.
+     *
+     * Los hashes van como un JSON array y no de a uno: son cientos, y cruzar la
+     * frontera nativa una vez por hash sería repetir el problema que este camino
+     * existe para resolver.
+     */
+    fun privateTxBodies(txHashes: List<String>): String {
+        requireLibrary()
+        if (txHashes.isEmpty()) return """{"bodies":{},"missing":[]}"""
+        val json = org.json.JSONArray(txHashes).toString()
+        return privateTxBodies0(json)
+    }
+
     private val PROXY_REGEX = Regex("\"proxy\"\\s*:\\s*\"([^\"]+)\"")
 
     @JvmStatic private external fun startTor0(cacheDir: String): String
@@ -181,6 +199,7 @@ object ZokaNativeNetwork {
     @JvmStatic private external fun blocksRange0(from: Long, to: Long): String
     @JvmStatic private external fun blocksDigestRange0(from: Long, to: Long): String
     @JvmStatic private external fun privateTxBody0(txHash: String): String
+    @JvmStatic private external fun privateTxBodies0(txHashesJson: String): String
     @JvmStatic private external fun connect0(configJson: String): String
     @JvmStatic private external fun publishPrivateTx0(txJson: String): String
     @JvmStatic private external fun status0(): String
