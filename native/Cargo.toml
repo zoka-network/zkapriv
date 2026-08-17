@@ -9,6 +9,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 jni = "0.21"
+# Para leer la lista de hashes que llega del lado Java en un solo cruce de la
+# frontera JNI. Son cientos: pasarlos de a uno seria repetir el problema que el
+# pedido en lote existe para resolver.
+serde_json = "1"
 # `mobile` makes the trusted-setup params load WITHOUT the per-point subgroup
 # check (params are digest-verified APK assets) — turns a ~minutes cold load
 # into seconds on-device. `randomx` stays off (no mining on the phone).

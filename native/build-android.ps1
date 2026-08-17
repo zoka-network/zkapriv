@@ -40,8 +40,17 @@ $env:CPATH = $clangResourceInclude
 
 Push-Location $nativeRoot
 try {
+    # Un fallo de cargo tiene que detener el script.
+    #
+    # Sin estos chequeos el script seguia de largo, bundleaba libc++ y salia con
+    # exito, dejando en jniLibs los .so de la corrida ANTERIOR. Eso hizo que se
+    # instalara un APK con la aplicacion nueva sobre el motor de red viejo, y
+    # los tiempos se interpretaran como si el cambio estuviera adentro. Un
+    # script de compilacion que miente es peor que uno que no existe.
     cargo ndk -t arm64-v8a -P 26 -o jniLibs build --release
+    if ($LASTEXITCODE -ne 0) { throw "cargo ndk fallo para arm64-v8a (codigo $LASTEXITCODE)" }
     cargo ndk -t armeabi-v7a -P 26 -o jniLibs build --release -j 1
+    if ($LASTEXITCODE -ne 0) { throw "cargo ndk fallo para armeabi-v7a (codigo $LASTEXITCODE)" }
 
     # libzoka_mobile.so links the shared C++ runtime (libc++_shared.so), so it
     # must be bundled alongside it for each ABI — otherwise dlopen fails at

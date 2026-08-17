@@ -212,12 +212,28 @@ fun SendScreen(
                 }
             }
 
-            if (!uiState.isLoading && !uiState.isBalanceVerified) {
+            // Dos avisos distintos, porque son dos situaciones distintas.
+            //
+            // Sin anclar a la cadena: el saldo no es confiable y no se puede
+            // gastar. Eso es un error y va en rojo.
+            //
+            // Con cuerpos faltantes pero anclado: el saldo ES gastable, solo que
+            // podria haber dinero entrante que no vemos. Antes este bloque se
+            // mostraba solo cuando el saldo no estaba verificado, asi que al
+            // dejar de bloquear el envio el aviso desaparecia entero y el
+            // usuario perdia la unica senal de que su saldo podia estar
+            // incompleto.
+            if (!uiState.isLoading && (!uiState.isBalanceVerified || uiState.isBalanceIncomplete)) {
+                val esBloqueante = !uiState.isBalanceVerified
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer
+                        containerColor = if (esBloqueante) {
+                            MaterialTheme.colorScheme.errorContainer
+                        } else {
+                            Color(0xFFFF9800).copy(alpha = 0.12f)
+                        }
                     )
                 ) {
                     Row(
@@ -228,18 +244,32 @@ fun SendScreen(
                         Icon(
                             Icons.Outlined.Warning,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onErrorContainer
+                            tint = if (esBloqueante) {
+                                MaterialTheme.colorScheme.onErrorContainer
+                            } else {
+                                Color(0xFFFF9800)
+                            }
                         )
                         Text(
+                            // El texto viejo decia "Sending is disabled" para el
+                            // caso de cuerpos faltantes, y ya no es cierto: un
+                            // cuerpo que falta solo puede ocultar dinero
+                            // entrante, nunca inflar el saldo, asi que lo que se
+                            // ve se puede gastar.
                             text = uiState.balanceError ?: if (uiState.missingTxCount > 0) {
-                                "Balance incomplete: ${uiState.missingTxCount} private transaction " +
-                                    "${if (uiState.missingTxCount == 1) "body is" else "bodies are"} still missing. " +
-                                    "Sending is disabled until the scan catches up at height ${uiState.scannedHeight}."
+                                "${uiState.missingTxCount} private transaction " +
+                                    "${if (uiState.missingTxCount == 1) "body is" else "bodies are"} " +
+                                    "unavailable from the P2P network, so any funds they may have " +
+                                    "sent you are not counted here. You can still spend the balance shown."
                             } else {
                                 "Balance has not been verified at the current P2P chain tip. Sending is disabled."
                             },
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onErrorContainer
+                            color = if (esBloqueante) {
+                                MaterialTheme.colorScheme.onErrorContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            }
                         )
                     }
                 }
