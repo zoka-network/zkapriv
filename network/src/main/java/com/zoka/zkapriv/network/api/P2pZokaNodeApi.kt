@@ -217,7 +217,10 @@ class P2pZokaNodeApi(
         val missing = json.getAsJsonArray("missing")
             ?.mapNotNull { runCatching { it.asString }.getOrNull() }
             ?: emptyList()
-        com.zoka.zkapriv.network.model.PrivateTxBatchResult(bodies, missing)
+        val unanswered = json.getAsJsonArray("unanswered")
+            ?.mapNotNull { runCatching { it.asString }.getOrNull() }
+            ?: emptyList()
+        com.zoka.zkapriv.network.model.PrivateTxBatchResult(bodies, missing, unanswered)
     }
 
     override suspend fun peerCount(): Int? = withContext(Dispatchers.IO) {

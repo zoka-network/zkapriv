@@ -279,5 +279,14 @@ data class ZokaPrivateOutputModel(
  */
 data class PrivateTxBatchResult(
     val bodies: Map<String, ZokaPrivateTransactionResponse>,
-    val missing: List<String>
+    /** Un par dijo explícitamente que no los tiene. Esto sí se puede anotar. */
+    val missing: List<String>,
+    /**
+     * Nadie contestó por ellos: par sin el protocolo, plazo agotado, corte.
+     *
+     * No se sabe nada, así que hay que volver a preguntar. Confundir estos con
+     * `missing` marcó las 266 transacciones de la cadena como perdidas y dejó
+     * el saldo en cero contra un par que corría un binario sin el protocolo.
+     */
+    val unanswered: List<String> = emptyList()
 )

@@ -215,7 +215,18 @@ class SecureStorage @Inject constructor(
         }
     }
 
-    private val KEY_CUERPOS_NO_DISPONIBLES = "cuerpos_privados_no_disponibles"
+    // La version en la clave descarta lo que guardo la version anterior.
+    //
+    // La v1 anotaba como irrecuperable todo cuerpo que no llegaba, sin
+    // distinguir "el par dice que no lo tiene" de "el par no contesto". Contra
+    // un par sin el protocolo en lote eso marco las 266 transacciones privadas
+    // de la cadena y las persistio, dejando el saldo en cero de forma
+    // permanente.
+    //
+    // Subir la version es la unica forma limpia de que un telefono que ya
+    // guardo esa lista mala la ignore, sin pedirle al usuario que borre datos ni
+    // que reinstale -- que le costaria la wallet.
+    private val KEY_CUERPOS_NO_DISPONIBLES = "cuerpos_privados_no_disponibles_v2"
 
 
     private fun balanceScanKey(address: String): String = "balance_scan_$address"

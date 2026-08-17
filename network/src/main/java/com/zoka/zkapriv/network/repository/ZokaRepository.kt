@@ -843,6 +843,30 @@ class ZokaRepository @Inject constructor(
             }
         }.getOrNull()
 
+    /**
+     * Conserva el resultado de la fase de cuerpos al escribir un avance de
+     * bloques.
+     *
+     * Existe porque el mismo error se cometio tres veces: hay tres lugares que
+     * escriben la instantanea -- el punto de control cada mil bloques, el cierre
+     * del recorrido de bloques, y la fase de cuerpos -- y arreglar uno dejaba
+     * los otros pisando los campos con vacios. Cada vez que eso pasaba, los 266
+     * cuerpos se volvian a bajar enteros.
+     *
+     * Los dos primeros no conocen esos campos todavia, asi que tienen que
+     * heredarlos de la instantanea anterior. Pasar por aca lo hace obligatorio
+     * en vez de recordado: un cuarto camino de guardado que llame a este helper
+     * no puede olvidarse.
+     */
+    private fun BalanceScanSnapshot.conservando(
+        previa: BalanceScanSnapshot?
+    ): BalanceScanSnapshot = copy(
+        ownedOutputs = previa?.ownedOutputs ?: emptyList(),
+        processedTxHashes = previa?.processedTxHashes ?: emptyList(),
+        ourOutputsByTx = previa?.ourOutputsByTx ?: emptyMap(),
+        txInputNullifiers = previa?.txInputNullifiers ?: emptyMap()
+    )
+
     private fun writeBalanceScanSnapshot(snapshot: BalanceScanSnapshot) {
         val json = gson.toJson(snapshot)
         if (json.length > MAX_BALANCE_SCAN_SNAPSHOT_CHARS) {
@@ -1118,7 +1142,6 @@ class ZokaRepository @Inject constructor(
                 // Los bloques nuevos de este tramo pueden traer transacciones
                 // que todavia no se procesaron; esas no figuran como procesadas
                 // y la fase de cuerpos las va a mirar.
-                val yaDescubierto = instantaneaPrevia
                 writeBalanceScanSnapshot(
                     BalanceScanSnapshot(
                         address = address,
@@ -1127,12 +1150,8 @@ class ZokaRepository @Inject constructor(
                         coinbases = myCoinbases.toList(),
                         privateTxHashes = allPrivateTxHashes.toList(),
                         nullifiers = allInputNullifiers.toList(),
-                        txTimestamps = txTimestampByHash.toMap(),
-                        ownedOutputs = yaDescubierto?.ownedOutputs ?: emptyList(),
-                        processedTxHashes = yaDescubierto?.processedTxHashes ?: emptyList(),
-                        ourOutputsByTx = yaDescubierto?.ourOutputsByTx ?: emptyMap(),
-                        txInputNullifiers = yaDescubierto?.txInputNullifiers ?: emptyMap()
-                    )
+                        txTimestamps = txTimestampByHash.toMap()
+                    ).conservando(instantaneaPrevia)
                 )
                 ultimoGuardado = to
                 _syncProgress.value = SyncProgress(true, to, chainHeight)
@@ -1158,7 +1177,7 @@ class ZokaRepository @Inject constructor(
                     privateTxHashes = allPrivateTxHashes.toList(),
                     nullifiers = allInputNullifiers.toList(),
                     txTimestamps = txTimestampByHash.toMap()
-                )
+                ).conservando(instantaneaPrevia)
             )
         }
 
@@ -1220,18 +1239,31 @@ class ZokaRepository @Inject constructor(
                 for ((hash, cuerpo) in traidos.bodies) {
                     privateTxCache[hash] = cuerpo
                 }
-                // Un cuerpo que los pares dijeron que no tienen se anota como
-                // irrecuperable, para no volver a pedirlo en cada arranque. El
-                // reintento periodico cada diez escaneos sigue existiendo: "no
-                // existe" no puede ser para siempre si la red lo recupera.
-                for (hash in traidos.missing) {
-                    missingPrivateTxCache.add(hash)
+                // Solo se anota como irrecuperable lo que un par dijo
+                // explicitamente que no tiene.
+                //
+                // Antes se anotaba todo lo que no llegaba, y contra un par que
+                // corria un binario sin este protocolo eso marco las 266
+                // transacciones de la cadena como perdidas, las guardo en disco
+                // y dejo el saldo en cero. "No lo tengo" y "no te pude
+                // contestar" son cosas distintas.
+                //
+                // Y una salvaguarda: si un solo lote dice que faltan casi todas,
+                // eso no es una cadena con cuerpos perdidos, es un par que no
+                // sabe responder. No se anota nada y se reintenta.
+                val casiTodas = traidos.missing.size > hashesPendientes.size / 2
+                if (traidos.missing.isNotEmpty() && !casiTodas) {
+                    for (hash in traidos.missing) {
+                        missingPrivateTxCache.add(hash)
+                    }
+                    guardarCuerposPerdidos()
                 }
-                if (traidos.missing.isNotEmpty()) guardarCuerposPerdidos()
                 Log.d(
                     "ZokaRepository",
                     "lote de cuerpos: ${traidos.bodies.size} traidos, " +
-                        "${traidos.missing.size} que ningun par tiene, " +
+                        "${traidos.missing.size} que ningun par tiene" +
+                        (if (casiTodas) " (NO anotados: son demasiados, el par no responde bien)" else "") +
+                        ", ${traidos.unanswered.size} sin respuesta, " +
                         "de ${hashesPendientes.size} pedidos"
                 )
             }
