@@ -199,6 +199,49 @@ class ZokaRepository @Inject constructor(
                 (nowMillis - observedAtMillis) <= VENTANA_FRESCA_MS
     }
 
+    /**
+     * Ambito propio para el escaneo, que sobrevive a las pantallas.
+     *
+     * El escaneo corria en `viewModelScope`, y ese se cancela cuando la pantalla
+     * se destruye: bloquear la app por inactividad, o navegar a otra seccion,
+     * cortaba el escaneo a mitad de camino. Con una fase de cuerpos que tarda
+     * minutos, eso significaba que casi nunca llegaba al final.
+     *
+     * El repositorio es singleton, asi que este ambito vive lo que vive el
+     * proceso. No es sincronizacion en segundo plano de verdad -- para eso hace
+     * falta un servicio, y esta anotado como pendiente -- pero al menos el
+     * trabajo ya empezado no se tira porque la pantalla se apago.
+     *
+     * `SupervisorJob` a proposito: un escaneo que falla no debe cancelar los
+     * demas.
+     */
+    @androidx.annotation.VisibleForTesting
+    internal var ambitoDeEscaneo: kotlinx.coroutines.CoroutineScope? =
+        kotlinx.coroutines.CoroutineScope(
+            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
+        )
+
+    /**
+     * Corre el bloque en el ambito del repositorio y espera su resultado.
+     *
+     * Quien llama sigue viendo una suspension normal: si su propia corrutina se
+     * cancela, deja de esperar, pero el trabajo de adentro sigue y termina de
+     * guardar lo que ya bajo. Eso es justo lo que se quiere aca -- la pantalla
+     * puede irse, el escaneo no.
+     */
+    private suspend fun <T> enAmbitoPropio(bloque: suspend () -> T): T {
+        // En pruebas el ambito se pone en null para que el trabajo corra en el
+        // hilo del test.
+        //
+        // No es cosmetico: al saltar a otro hilo, los mocks estaticos de
+        // `android.util.Log` -- que son por hilo -- dejan de aplicar y el codigo
+        // revienta con una excepcion que no tiene nada que ver con lo que se esta
+        // probando. Un cambio que hace el codigo menos testeable no es gratis
+        // aunque funcione en produccion.
+        val ambito = ambitoDeEscaneo ?: return withContext(Dispatchers.IO) { bloque() }
+        return ambito.async { bloque() }.await()
+    }
+
     private val _peerTelemetry = kotlinx.coroutines.flow.MutableStateFlow(PeerTelemetry())
     val peerTelemetry: kotlinx.coroutines.flow.StateFlow<PeerTelemetry> = _peerTelemetry
 
@@ -392,9 +435,29 @@ class ZokaRepository @Inject constructor(
         address: String,
         scanKey: ByteArray? = null,
         restoreHeight: Long = 0
-    ): Result<BalanceInfo> = withContext(Dispatchers.IO) {
-        getAddressBalanceOnIo(address, scanKey, restoreHeight)
+    ): Result<BalanceInfo> = enAmbitoPropio {
+        // El escaneo corre en el ambito del repositorio, no en el de la pantalla
+        // que lo pidio.
+        //
+        // Antes iba en `viewModelScope`: bloquear la app por inactividad o
+        // cambiar de seccion cancelaba el escaneo a mitad de la fase de cuerpos,
+        // que tarda minutos. Casi nunca llegaba al final, y cada intento
+        // reempezaba.
+        //
+        // Ahora la pantalla puede irse y el trabajo sigue hasta guardar lo que
+        // bajo. Si la misma direccion ya se esta escaneando, no se lanza otro:
+        // dos escaneos en paralelo se pisarian la instantanea.
+        val enCurso = escaneosEnCurso.putIfAbsent(address, Unit) == null
+        try {
+            getAddressBalanceOnIo(address, scanKey, restoreHeight)
+        } finally {
+            if (enCurso) escaneosEnCurso.remove(address)
+        }
     }
+
+    /** Direcciones que ya tienen un escaneo corriendo, para no duplicarlo. */
+    private val escaneosEnCurso =
+        java.util.concurrent.ConcurrentHashMap<String, Unit>()
 
     private suspend fun getAddressBalanceOnIo(
         address: String,

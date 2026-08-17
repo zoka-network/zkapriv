@@ -212,7 +212,15 @@ class FreshBalanceRevalidationTest {
                 secureStorage = secureStorage,
                 localProverClient = prover,
                 context = context
-            )
+            ).also {
+                // Sin ambito propio: el escaneo corre en el hilo del test.
+                //
+                // En produccion el escaneo salta a un ambito del repositorio para
+                // sobrevivir a que la pantalla se cierre. Aca eso rompe los mocks
+                // estaticos de `android.util.Log`, que son por hilo, y el fallo
+                // no tiene nada que ver con lo que se esta probando.
+                it.ambitoDeEscaneo = null
+            }
         )
     }
 
