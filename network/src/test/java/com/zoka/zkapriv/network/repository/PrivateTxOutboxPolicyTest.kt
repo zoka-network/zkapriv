@@ -124,6 +124,46 @@ class PrivateTxOutboxPolicyTest {
         assertFalse(sinAncla.isVerifiedAtTip(50L, "tip-50"))
     }
 
+    /**
+     * Todo camino que escriba la instantanea tiene que conservar el resultado de
+     * la fase de cuerpos.
+     *
+     * Hay dos: el punto de control cada mil bloques y el de la fase de cuerpos.
+     * El primero se escribia sin esos campos, y los defaults vacios pisaban lo
+     * que el segundo habia guardado -- asi que los 266 cuerpos se rebajaban
+     * igual y el arreglo quedaba anulado por el otro camino.
+     *
+     * Esta prueba no llama al escaner: fija la propiedad estructural de que un
+     * `copy` de avance no puede perder lo descubierto. Es la forma barata de
+     * que un tercer camino de guardado no repita el error.
+     */
+    @Test
+    fun advancingTheScanCheckpointNeverDropsWhatTheBodyPhaseFound() {
+        val conResultado = ZokaRepository.BalanceInfo(
+            1_000L,
+            0L,
+            scannedHeight = 5_000L,
+            isVerified = true,
+            verifiedTipHash = "tip-5000"
+        )
+
+        // Avanzar la altura no puede degradar la verificacion ya lograda.
+        val avanzada = conResultado.copy(
+            scannedHeight = 6_000L,
+            verifiedTipHash = "tip-6000"
+        )
+
+        assertTrue(
+            "avanzar el punto de control no puede perder la verificacion",
+            avanzada.isVerified
+        )
+        assertTrue(avanzada.isVerifiedAtTip(6_000L, "tip-6000"))
+        assertFalse(
+            "y sigue atado a su propia punta, no a la anterior",
+            avanzada.isVerifiedAtTip(5_000L, "tip-5000")
+        )
+    }
+
     @Test
     fun repositoryRetryPublishesStoredBodyAndNeverInvokesTheProver() {
         mockStatic(Log::class.java).use {

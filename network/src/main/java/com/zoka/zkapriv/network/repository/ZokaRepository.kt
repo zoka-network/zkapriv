@@ -1102,6 +1102,20 @@ class ZokaRepository @Inject constructor(
             // paso a este escaner en la practica. Cada punto de control cuesta
             // una escritura y salva media hora de trabajo.
             if (anclaHash.isNotBlank() && (to - ultimoGuardado) >= BLOQUES_ENTRE_PUNTOS_DE_CONTROL) {
+                // Este punto de control conserva lo que la fase de cuerpos ya
+                // habia descubierto.
+                //
+                // Sin esto lo borraba: escribia una instantanea sin esos campos
+                // y los defaults vacios pisaban el resultado de la corrida
+                // anterior, asi que los cuerpos se rebajaban igual. El arreglo
+                // de persistir el resultado quedaba anulado por el otro camino
+                // de guardado -- el mismo error de arreglar una rama y dejar la
+                // otra.
+                //
+                // Los bloques nuevos de este tramo pueden traer transacciones
+                // que todavia no se procesaron; esas no figuran como procesadas
+                // y la fase de cuerpos las va a mirar.
+                val yaDescubierto = instantaneaPrevia
                 writeBalanceScanSnapshot(
                     BalanceScanSnapshot(
                         address = address,
@@ -1110,7 +1124,11 @@ class ZokaRepository @Inject constructor(
                         coinbases = myCoinbases.toList(),
                         privateTxHashes = allPrivateTxHashes.toList(),
                         nullifiers = allInputNullifiers.toList(),
-                        txTimestamps = txTimestampByHash.toMap()
+                        txTimestamps = txTimestampByHash.toMap(),
+                        ownedOutputs = yaDescubierto?.ownedOutputs ?: emptyList(),
+                        processedTxHashes = yaDescubierto?.processedTxHashes ?: emptyList(),
+                        ourOutputsByTx = yaDescubierto?.ourOutputsByTx ?: emptyMap(),
+                        txInputNullifiers = yaDescubierto?.txInputNullifiers ?: emptyMap()
                     )
                 )
                 ultimoGuardado = to
