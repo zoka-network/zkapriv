@@ -746,7 +746,7 @@ fun SettingsScreen(
                                             onClick = { 
                                                 val intent = android.content.Intent(
                                                     android.content.Intent.ACTION_VIEW,
-                                                    android.net.Uri.parse("https://github.com/ZokaNetwork/zkapriv")
+                                                    android.net.Uri.parse("https://github.com/zoka-network/zkapriv")
                                                 )
                                                 context.startActivity(intent)
                                             },
