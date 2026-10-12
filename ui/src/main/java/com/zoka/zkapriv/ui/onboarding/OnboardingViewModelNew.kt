@@ -6,11 +6,15 @@ import com.zoka.zkapriv.security.wallet.MnemonicManager
 import com.zoka.zkapriv.security.wallet.WalletManager
 import com.zoka.zkapriv.security.storage.SecureStorage
 import com.zoka.zkapriv.security.crypto.KeystoreManager
+import com.zoka.zkapriv.core.util.Constants
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 @HiltViewModel
@@ -100,6 +104,7 @@ class OnboardingViewModelNew @Inject constructor(
     }
 
     fun onPinCreated(pin: String, biometricEnabled: Boolean) {
+        _uiState.update { it.copy(finishing = true) }
         viewModelScope.launch {
             try {
                 // Store PIN
@@ -142,10 +147,9 @@ class OnboardingViewModelNew @Inject constructor(
                     accountManager.clearAllAccounts()
                     // For a freshly created wallet (no prior history), anchor the
                     // scan at the current chain tip so it doesn't walk the whole
-                    // chain. Imported wallets pass 0 to scan from genesis. If the
-                    // tip is unreachable (offline), fall back to 0 (scan all).
+                    // chain. Imported wallets pass 0 to scan from genesis.
                     val restoreHeight = if (_uiState.value.isNewWallet) {
-                        repository.getCurrentChainHeight() ?: 0L
+                        newWalletRestoreHeight()
                     } else {
                         0L
                     }
@@ -159,16 +163,48 @@ class OnboardingViewModelNew @Inject constructor(
                 _uiState.update {
                     it.copy(
                         currentStep = OnboardingStepNew.COMPLETED,
+                        finishing = false,
                         error = null
                     )
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
                 _uiState.update {
-                    it.copy(error = "Setup failed: ${e.javaClass.simpleName} - ${e.message ?: "Unknown error"}")
+                    it.copy(
+                        finishing = false,
+                        error = "Setup failed: ${e.javaClass.simpleName} - ${e.message ?: "Unknown error"}"
+                    )
                 }
             }
         }
+    }
+
+    /**
+     * Height a brand-new wallet starts scanning from. Its keys were just
+     * generated, so nothing can exist for it before now: the chain tip is
+     * enough, and so is any height that already existed when this build was
+     * made ([Constants.WALLET_BIRTHDAY_FLOOR]).
+     *
+     * The tip comes from the P2P network over Tor, which on a first run (cold
+     * Arti, no directory cache) can take minutes. This used to block the PIN
+     * screen for up to ~2 minutes with no feedback and then fall back to 0,
+     * i.e. scanning the whole chain from genesis. Now the lookup runs on its
+     * own job and is awaited at most [NEW_WALLET_TIP_WAIT_MS]; the native call
+     * cannot be interrupted, so it keeps running in the background and warms
+     * up the network for the first sync.
+     */
+    private suspend fun newWalletRestoreHeight(): Long {
+        val tip = viewModelScope.async(Dispatchers.IO) { repository.getCurrentChainHeight() }
+        val height = withTimeoutOrNull(NEW_WALLET_TIP_WAIT_MS) { tip.await() }
+        android.util.Log.d(
+            "Onboarding",
+            "New wallet tip=${height ?: "unavailable"} floor=${Constants.WALLET_BIRTHDAY_FLOOR}"
+        )
+        return maxOf(height ?: 0L, Constants.WALLET_BIRTHDAY_FLOOR)
+    }
+
+    private companion object {
+        const val NEW_WALLET_TIP_WAIT_MS = 15_000L
     }
 
     fun goBack() {
@@ -202,6 +238,9 @@ data class OnboardingStateNew(
     // balance scan at the current chain tip (new wallet, no past) or scan from
     // genesis (imported wallet, may have history). Default false = scan all.
     val isNewWallet: Boolean = false,
+    // True from the PIN confirmation until the wallet is ready. The screen
+    // shows a progress overlay meanwhile: the step may wait for the network.
+    val finishing: Boolean = false,
     val error: String? = null
 )
 

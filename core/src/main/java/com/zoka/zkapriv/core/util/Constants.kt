@@ -48,6 +48,12 @@ object Constants {
     // nombre que muestra ZSilent.
     const val ZOKA_NETWORK_DISPLAY_NAME = "Zoka Quantic · Testnet"
 
+    // Altura que ya existia cuando se compilo esta version (la cadena tenia
+    // 25.204 bloques el 11/10/2026). Una wallet creada con esta app no puede
+    // tener nada antes, asi que es un piso seguro para empezar a escanear
+    // cuando la red todavia no respondio. Subirla en cada release.
+    const val WALLET_BIRTHDAY_FLOOR = 25_200L
+
     // Token economics (economics.testnet.v1.json / mainnet)
     const val ATOMS_PER_ZKA = 1_000_000L          // 1 ZKA = 1,000,000 atoms (decimals = 6)
     const val MIN_FEE_ATOMS = 100L                 // fee_market_step = 100 atoms = 0.0001 ZKA
