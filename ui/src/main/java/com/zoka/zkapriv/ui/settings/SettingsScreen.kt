@@ -35,6 +35,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.zoka.zkapriv.core.util.Constants
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -588,7 +589,7 @@ fun SettingsScreen(
                                         }
 
                                         Text(
-                                            text = "ZK Privacy Wallet · Zoka Network",
+                                            text = "ZK Privacy Wallet · ${Constants.ZOKA_NETWORK_DISPLAY_NAME}",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = Color.White.copy(alpha = 0.8f)
                                         )

@@ -26,6 +26,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.zoka.zkapriv.core.util.Constants
 
 /**
  * Wallet entry screen (create / recover). Styled to match the biometric
@@ -256,7 +257,7 @@ fun WelcomeScreenNew(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "Zoka Network · MainNet",
+                    text = "Zoka Network · ${Constants.ZOKA_NETWORK_DISPLAY_NAME}",
                     color = textSecondary,
                     fontSize = 12.sp
                 )
@@ -294,7 +295,8 @@ fun WelcomeScreenNew(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "• You are responsible for keeping your recovery phrase safe\n" +
+                        text = "• ${Constants.ZOKA_NETWORK_DISPLAY_NAME}: its ZKA are test coins with no monetary value and do not carry over to the Zoka Quantic mainnet\n" +
+                                "• You are responsible for keeping your recovery phrase safe\n" +
                                 "• Never share your seed phrase or scan key with anyone\n" +
                                 "• Transactions on the Zoka blockchain are irreversible\n" +
                                 "• This wallet is self-custodial — Zoka Network has no access to your keys\n" +
