@@ -159,7 +159,7 @@ fun WelcomeScreenNew(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "ZK Privacy · Self-Custodial · Zoka Network",
+                text = "ZK Privacy · Self-Custodial · Zoka Quantic",
                 fontSize = 15.sp,
                 color = textSecondary
             )
@@ -257,7 +257,7 @@ fun WelcomeScreenNew(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "Zoka Network · ${Constants.ZOKA_NETWORK_DISPLAY_NAME}",
+                    text = Constants.ZOKA_NETWORK_DISPLAY_NAME,
                     color = textSecondary,
                     fontSize = 12.sp
                 )
@@ -295,7 +295,7 @@ fun WelcomeScreenNew(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "• ${Constants.ZOKA_NETWORK_DISPLAY_NAME}: its ZKA are test coins with no monetary value and do not carry over to the Zoka Quantic mainnet\n" +
+                        text = "• This wallet runs on the ${Constants.ZOKA_NETWORK_DISPLAY_NAME}: ZKA here are test coins with no monetary value and do not carry over to the Zoka Quantic mainnet\n" +
                                 "• You are responsible for keeping your recovery phrase safe\n" +
                                 "• Never share your seed phrase or scan key with anyone\n" +
                                 "• Transactions on the Zoka blockchain are irreversible\n" +

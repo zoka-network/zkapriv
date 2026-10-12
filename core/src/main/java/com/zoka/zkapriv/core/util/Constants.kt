@@ -40,11 +40,13 @@ object Constants {
     const val COINGECKO_API = "https://api.coingecko.com/api/v3/"
     const val ZOKA_CHAIN_ID = "zoka-mainnet-zenith-v1"
 
-    // Zenith es la testnet de Zoka Quantic desde octubre de 2026: sus ZKA son
-    // de prueba y los saldos no pasan a Quantic. El chain id conserva
-    // "mainnet" porque de el sale el hash del genesis y no se puede renombrar;
-    // lo que se le muestra a la persona es este nombre, nunca el chain id.
-    const val ZOKA_NETWORK_DISPLAY_NAME = "Zenith testnet"
+    // La cadena actual (Zenith) es la testnet de Zoka Quantic desde octubre de
+    // 2026 y la app se presenta como cliente de Quantic: sus ZKA son de prueba
+    // y los saldos no pasan a la mainnet. El chain id conserva "mainnet"
+    // porque de el sale el hash del genesis y no se puede renombrar; lo que se
+    // le muestra a la persona es este nombre, nunca el chain id. Es el mismo
+    // nombre que muestra ZSilent.
+    const val ZOKA_NETWORK_DISPLAY_NAME = "Zoka Quantic · Testnet"
 
     // Token economics (economics.testnet.v1.json / mainnet)
     const val ATOMS_PER_ZKA = 1_000_000L          // 1 ZKA = 1,000,000 atoms (decimals = 6)

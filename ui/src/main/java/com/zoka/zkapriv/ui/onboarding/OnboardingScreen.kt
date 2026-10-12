@@ -275,7 +275,7 @@ private fun WelcomeScreen(
         )
         
         Text(
-            text = "Your secure Zoka Network wallet",
+            text = "Your secure Zoka Quantic wallet",
             style = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center
         )
