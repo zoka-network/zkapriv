@@ -2,7 +2,9 @@ package com.zoka.zkapriv.network.repository
 
 import android.util.Log
 import com.google.gson.Gson
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
 import com.zoka.zkapriv.core.model.Token
 import com.zoka.zkapriv.core.model.Transaction
@@ -15,6 +17,7 @@ import com.zoka.zkapriv.network.model.ZokaSendFromSeedRequest
 import com.zoka.zkapriv.network.model.ZokaStatsResponse
 import com.zoka.zkapriv.network.model.ZokaTransactionRequest
 import com.zoka.zkapriv.network.nativebridge.LocalProverClient
+import com.zoka.zkapriv.network.nativebridge.ZokaNativeWallet
 import com.zoka.zkapriv.security.storage.SecureStorage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -832,6 +835,13 @@ class ZokaRepository @Inject constructor(
     /** Una salida nuestra ya descubierta. Se guarda para no volver a descifrarla. */
     private data class OwnedOutput(val amountAtoms: Long = 0L, val nullifierHex: String = "")
 
+    /** Salida v2 que espera el reconocimiento en lote del motor nativo. */
+    private data class SalidaHibridaPendiente(
+        val txHash: String,
+        val output: ZokaPrivateOutputModel,
+        val nullifierDomain: String
+    )
+
     private data class BalanceScanSnapshot(
         val schemaVersion: Int = BALANCE_SCAN_SCHEMA_VERSION,
         val address: String = "",
@@ -1392,6 +1402,7 @@ class ZokaRepository @Inject constructor(
 
         var tandasDesdeElUltimoGuardado = 0
         val hashList = hashesPendientes
+        val pendientesHibridas = mutableListOf<SalidaHibridaPendiente>()
         _syncProgress.value = SyncProgress(
             scanning = true,
             scannedHeight = chainHeight,
@@ -1448,6 +1459,16 @@ class ZokaRepository @Inject constructor(
                     if (privateTx.nullifier.isNotBlank()) add(privateTx.nullifier)
                 }
                 for (output in privateTx.outputs) {
+                    if (output.outputVersion == 2) {
+                        // Pago a una zkq1: el reconocimiento necesita X-Wing,
+                        // que solo esta en el motor. Va en lote al cerrar la tanda.
+                        if (output.kemCiphertext.isNotEmpty() && output.outputId.isNotBlank() &&
+                            output.commitment.isNotBlank() && txNullifierDomain.isNotBlank()
+                        ) {
+                            pendientesHibridas.add(SalidaHibridaPendiente(txHash, output, txNullifierDomain))
+                        }
+                        continue
+                    }
                     val amount = checkAndDecryptOutput(
                         output = output,
                         scanScalar = scanScalar,
@@ -1461,6 +1482,20 @@ class ZokaRepository @Inject constructor(
                     ourOutputsByTx[txHash] = (ourOutputsByTx[txHash] ?: 0L) + amount
                     receivedByTx.add(txHash to amount)
                 }
+            }
+            // Antes del punto de control: lo reconocido en la tanda tiene que
+            // quedar guardado junto con los cuerpos que ya se marcaron hechos.
+            if (pendientesHibridas.isNotEmpty()) {
+                for ((salida, amount) in reconocerSalidasHibridas(scanKeyBytes, pendientesHibridas)) {
+                    val nullifierHex = deriveNullifierHex(
+                        spendKeyRaw, salida.output.outputId, salida.output.commitment
+                    )
+                    ownedOutputs.add(OwnedOutput(amount, nullifierHex))
+                    ownedByNullifier[nullifierHex] = amount
+                    ourOutputsByTx[salida.txHash] = (ourOutputsByTx[salida.txHash] ?: 0L) + amount
+                    receivedByTx.add(salida.txHash to amount)
+                }
+                pendientesHibridas.clear()
             }
             _syncProgress.value = SyncProgress(
                 scanning = true,
@@ -1643,6 +1678,60 @@ class ZokaRepository @Inject constructor(
         }
         Log.w("ZokaRepository", "Skipping $txHash after rate limit retries")
         return null
+    }
+
+    /**
+     * Reconoce salidas v2 con el motor nativo, en lotes del tope del motor.
+     *
+     * Si el motor no esta empaquetado o no trae X-Wing, devuelve lo que llevaba:
+     * el saldo no vera pagos a la zkq1, pero el escaneo v1 sigue intacto. El
+     * costo es el mismo para salidas propias y ajenas.
+     */
+    private fun reconocerSalidasHibridas(
+        scanKeyBytes: ByteArray,
+        pendientes: List<SalidaHibridaPendiente>
+    ): List<Pair<SalidaHibridaPendiente, Long>> {
+        val seedHex = scanKeyBytes.joinToString("") { "%02x".format(it) }
+        val propias = mutableListOf<Pair<SalidaHibridaPendiente, Long>>()
+        for (lote in pendientes.chunked(ZokaNativeWallet.MAX_HYBRID_OUTPUTS_PER_CALL)) {
+            val pedido = JsonObject().apply {
+                addProperty("seed_hex", seedHex)
+                add("outputs", JsonArray().apply {
+                    for (pendiente in lote) {
+                        add(JsonObject().apply {
+                            add("kem_ciphertext", gson.toJsonTree(pendiente.output.kemCiphertext))
+                            addProperty("commitment", pendiente.output.commitment)
+                            addProperty("one_time_public_key", pendiente.output.oneTimePublicKey)
+                            add("encrypted_amount", gson.toJsonTree(pendiente.output.encryptedAmount))
+                            addProperty("nullifier_domain", pendiente.nullifierDomain)
+                        })
+                    }
+                })
+            }
+            val respuesta = try {
+                JsonParser.parseString(ZokaNativeWallet.scanHybrid(pedido.toString())).asJsonObject
+            } catch (e: Exception) {
+                Log.w("ZokaRepository", "escaneo v2 no disponible: ${e.message}")
+                return propias
+            }
+            if (respuesta.has("error")) {
+                Log.w("ZokaRepository", "escaneo v2 fallo: ${respuesta.get("error")}")
+                return propias
+            }
+            if (respuesta.get("supported")?.asBoolean != true) {
+                Log.w("ZokaRepository", "el motor no trae X-Wing: ${lote.size} salidas v2 sin reconocer")
+                return propias
+            }
+            val montos = respuesta.getAsJsonArray("amounts") ?: return propias
+            lote.forEachIndexed { indice, pendiente ->
+                val monto = montos.get(indice)
+                if (monto != null && !monto.isJsonNull) {
+                    val atomos = monto.asLong
+                    if (atomos > 0L) propias.add(pendiente to atomos)
+                }
+            }
+        }
+        return propias
     }
 
     private fun checkAndDecryptOutput(
@@ -1831,7 +1920,26 @@ class ZokaRepository @Inject constructor(
                     IllegalArgumentException("Amount must be greater than zero")
                 )
             }
-            if (!to.startsWith("zka1") || to.length < 32) {
+            if (to.startsWith("zkq1")) {
+                // El motor vuelve a validar todo; esto corta antes de reservar
+                // notas si la red todavia no acepta salidas v2.
+                if (com.zoka.zkapriv.network.BuildConfig.ZOKA_PRIVATE_SEND_MODE != "local-self-custody") {
+                    return@withLock Result.Error(
+                        IllegalArgumentException("zkq1 addresses need the on-device transaction engine")
+                    )
+                }
+                val info = infoHibridaDelMotor(seedHex)
+                if (info?.supported != true || info.activationHeight == null) {
+                    return@withLock Result.Error(
+                        IllegalArgumentException(
+                            "zkq1 addresses are not active on this network yet; use the recipient's zka1 address"
+                        )
+                    )
+                }
+                if (!validateZkq1Address(to)) {
+                    return@withLock Result.Error(IllegalArgumentException("Invalid recipient address"))
+                }
+            } else if (!to.startsWith("zka1") || to.length < 32) {
                 return@withLock Result.Error(
                     IllegalArgumentException("Invalid recipient address")
                 )
@@ -2178,10 +2286,83 @@ class ZokaRepository @Inject constructor(
         return Result.Success("1000")
     }
 
+    // ── Direcciones zkq1 (salidas v2) ─────────────────────────────────────────
+
+    /** Lo que el motor informa de la dirección v2 de la wallet. */
+    data class HybridWalletInfo(
+        /** El motor trae X-Wing (`pq-experimental`). */
+        val supported: Boolean,
+        /** Altura desde la que la red acepta salidas v2; nula = no activada. */
+        val activationHeight: Long?,
+        val hybridAddress: String?
+    )
+
+    /**
+     * Altura de activación que informó el motor la última vez que se le
+     * preguntó. Nula mientras la red no active la zkq1 (hoy): con eso la app no
+     * acepta enviar a una zkq1 ni la muestra para recibir.
+     */
+    @Volatile
+    private var activacionHibrida: Long? = null
+
+    private fun infoHibridaDelMotor(seedHex: String): HybridWalletInfo? {
+        return try {
+            val json = JsonParser.parseString(ZokaNativeWallet.walletHybridInfo(seedHex)).asJsonObject
+            if (json.has("error")) {
+                Log.w("ZokaRepository", "info zkq1 no disponible: ${json.get("error")}")
+                return null
+            }
+            val soportada = json.get("supported")?.asBoolean == true
+            val altura = json.get("activation_height")?.takeUnless { it.isJsonNull }?.asLong
+            val direccion = json.get("hybrid_address")?.takeUnless { it.isJsonNull }?.asString
+            activacionHibrida = if (soportada) altura else null
+            HybridWalletInfo(soportada, altura, direccion)
+        } catch (e: Exception) {
+            Log.w("ZokaRepository", "info zkq1 no disponible: ${e.message}")
+            null
+        }
+    }
+
+    /** Pregunta al motor por la dirección v2 y refresca si la red la activó. */
+    suspend fun hybridWalletInfo(scanKey: ByteArray): HybridWalletInfo? =
+        withContext(Dispatchers.Default) {
+            infoHibridaDelMotor(scanKey.joinToString("") { "%02x".format(it) })
+        }
+
+    /**
+     * La zkq1 para recibir, solo si la red ya la activó y el motor la soporta.
+     * Antes de la activación nadie puede pagarle: mostrarla sería invitar a un
+     * envío que la red rechaza.
+     */
+    suspend fun hybridReceiveAddress(scanKey: ByteArray): String? =
+        hybridWalletInfo(scanKey)
+            ?.takeIf { it.supported && it.activationHeight != null }
+            ?.hybridAddress
+
+    // zkq1 = "zkq1" + Base58(version 2 + spend_pub32 + clave X-Wing 1216 + checksum4)
+    // → 1253 bytes. La validez de las claves la revisa el motor al armar el envío.
+    private fun validateZkq1Address(address: String): Boolean {
+        if (!address.startsWith("zkq1") || address.length > 1800) return false
+        return try {
+            val decoded = decodeBase58(address.removePrefix("zkq1"))
+            if (decoded.size != 1253 || decoded[0] != 2.toByte()) return false
+            val payload = decoded.copyOfRange(0, 1249)
+            val checksum = decoded.copyOfRange(1249, 1253)
+            val sha = MessageDigest.getInstance("SHA-256")
+            sha.update("zoka-hybrid-address-v2".toByteArray(Charsets.UTF_8))
+            sha.update(0x1f.toByte())
+            sha.update(payload)
+            checksum.contentEquals(sha.digest().copyOfRange(0, 4))
+        } catch (_: Exception) { false }
+    }
+
     // ── Address validation ────────────────────────────────────────────────────
     // zka1 = "zka1" + Base58(scan_pub32 + spend_pub32 + checksum4) → 68 decoded bytes
 
     fun validateZokaAddress(address: String): Boolean {
+        if (address.startsWith("zkq1")) {
+            return activacionHibrida != null && validateZkq1Address(address)
+        }
         if (!address.startsWith("zka1")) return false
         return try {
             val decoded = decodeBase58(address.removePrefix("zka1"))

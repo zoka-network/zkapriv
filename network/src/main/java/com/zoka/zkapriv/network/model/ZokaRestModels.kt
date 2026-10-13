@@ -266,7 +266,13 @@ data class ZokaPrivateOutputModel(
     @SerializedName("output_id")
     val outputId: String = "",
     @SerializedName("is_change")
-    val isChange: Boolean = false
+    val isChange: Boolean = false,
+    // Salida v2 (pago a una zkq1). Las v1 no traen estos campos: el JSON del
+    // nodo los omite, y los defaults dejan la salida igual que antes.
+    @SerializedName("output_version")
+    val outputVersion: Int = 1,
+    @SerializedName("kem_ciphertext")
+    val kemCiphertext: List<Int> = emptyList()
 )
 
 

@@ -3,7 +3,9 @@ package com.zoka.zkapriv.ui.transaction
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.zoka.zkapriv.core.util.Constants
+import com.zoka.zkapriv.network.repository.ZokaRepository
 import com.zoka.zkapriv.price.repository.PriceRepository
+import com.zoka.zkapriv.security.wallet.AccountManager
 import com.zoka.zkapriv.security.storage.SecureStorage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -13,7 +15,9 @@ import javax.inject.Inject
 @HiltViewModel
 class ReceiveViewModel @Inject constructor(
     private val secureStorage: SecureStorage,
-    private val priceRepository: PriceRepository
+    private val priceRepository: PriceRepository,
+    private val accountManager: AccountManager,
+    private val zokaRepository: ZokaRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ReceiveState())
@@ -27,6 +31,7 @@ class ReceiveViewModel @Inject constructor(
                     address = address,
                     qrContent = generateQrContent(address, null)
                 ) }
+                cargarDireccionHibrida(address)
             }
 
             // Monitor USD price
@@ -35,6 +40,26 @@ class ReceiveViewModel @Inject constructor(
                     is com.zoka.zkapriv.core.util.Result.Success -> _uiState.update { it.copy(usdPrice = result.data) }
                     else -> { /* ignore */ }
                 }
+            }
+        }
+    }
+
+    /**
+     * La zkq1 aparece solo cuando la red la activa: el motor informa la altura
+     * y, mientras sea nula, el repositorio devuelve nulo y la tarjeta no se ve.
+     */
+    private fun cargarDireccionHibrida(address: String) {
+        viewModelScope.launch {
+            val cuenta = accountManager.activeAccount.value?.takeIf { it.address == address }
+                ?: return@launch
+            val scanKey = accountManager.getScanKeyForAccount(cuenta.id) ?: return@launch
+            val zkq1 = try {
+                zokaRepository.hybridReceiveAddress(scanKey)
+            } finally {
+                scanKey.fill(0)
+            }
+            if (zkq1 != null) {
+                _uiState.update { it.copy(hybridAddress = zkq1) }
             }
         }
     }
@@ -120,5 +145,7 @@ data class ReceiveState(
     val isUsdMode: Boolean = false,
     val qrContent: String = "",
     val usdPrice: Double = 0.0,
-    val error: String? = null
+    val error: String? = null,
+    /** Dirección zkq1; nula mientras la red no active las salidas v2. */
+    val hybridAddress: String? = null
 )

@@ -34,6 +34,12 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 tor-rtcompat = "0.45"
 tokio = { version = "1", features = ["rt", "net", "io-util", "macros"] }
 
+[features]
+# Direcciones zkq1 y salidas v2 (X-Wing). build-android.ps1 la activa para los
+# dos ABIs: sin ella el motor no reconoce pagos a la zkq1 de la wallet. No
+# cambia nada mientras la red no fije la altura de activacion.
+pq-experimental = ["zoka/pq-experimental"]
+
 # Aggressive release optimization for the on-device Groth16 prover. This is a
 # standalone crate (not a workspace member), so its own [profile.release]
 # governs the .so. LTO + a single codegen unit let the optimizer inline across

@@ -113,6 +113,11 @@ class SendViewModel @Inject constructor(
         val scanKey = matchingAccount?.let { accountManager.getScanKeyForAccount(it.id) }
             ?: secureStorage.getMnemonic("default_wallet")?.let(walletManager::getScanKey)
         val restoreHeight = matchingAccount?.restoreHeight ?: 0L
+        // Refresca si la red activo la zkq1, para que el campo de destino la
+        // acepte. Con la altura nula (hoy) una zkq1 sigue siendo invalida.
+        scanKey?.copyOf()?.let { copia ->
+            try { zokaRepository.hybridWalletInfo(copia) } finally { copia.fill(0) }
+        }
         when (val balRes = zokaRepository.getAddressBalance(address, scanKey, restoreHeight)) {
             is com.zoka.zkapriv.core.util.Result.Success -> {
                 val info = balRes.data

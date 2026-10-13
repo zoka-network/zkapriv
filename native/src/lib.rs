@@ -64,6 +64,62 @@ pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeWall
     java_string(&mut env, response)
 }
 
+/// Dirección `zkq1` de la wallet y altura de activación de la red.
+///
+/// La app muestra la `zkq1` solo si `activation_height` no es nulo: antes de la
+/// activación nadie puede pagarle a esa dirección.
+#[no_mangle]
+pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeWallet_hybridWalletInfo(
+    mut env: JNIEnv,
+    _class: JClass,
+    seed_hex: JString,
+) -> jstring {
+    let seed: String = match env.get_string(&seed_hex) {
+        Ok(value) => value.into(),
+        Err(err) => {
+            return java_string(
+                &mut env,
+                format!(r#"{{"error":"invalid JNI seed string: {err}"}}"#),
+            )
+        }
+    };
+    let result = catch_unwind(AssertUnwindSafe(|| zoka::mobile::hybrid_wallet_info_json(&seed)));
+    let response = match result {
+        Ok(Ok(json)) => json,
+        Ok(Err(err)) => format!(r#"{{"error":{}}}"#, json_string(&err)),
+        Err(_) => r#"{"error":"hybrid wallet info panicked"}"#.to_string(),
+    };
+    java_string(&mut env, response)
+}
+
+/// Reconoce en lote salidas v2 de la cadena y devuelve el monto de las propias.
+///
+/// El escaneo v1 sigue en Kotlin; las v2 necesitan X-Wing, que solo está en el
+/// motor. Tope de salidas por llamada: `zoka::mobile::MOBILE_HYBRID_SCAN_MAX_OUTPUTS`.
+#[no_mangle]
+pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeWallet_scanHybridOutputs(
+    mut env: JNIEnv,
+    _class: JClass,
+    request_json: JString,
+) -> jstring {
+    let request: String = match env.get_string(&request_json) {
+        Ok(value) => value.into(),
+        Err(err) => {
+            return java_string(
+                &mut env,
+                format!(r#"{{"error":"invalid JNI request string: {err}"}}"#),
+            )
+        }
+    };
+    let result = catch_unwind(AssertUnwindSafe(|| zoka::mobile::scan_hybrid_outputs_json(&request)));
+    let response = match result {
+        Ok(Ok(json)) => json,
+        Ok(Err(err)) => format!(r#"{{"error":{}}}"#, json_string(&err)),
+        Err(_) => r#"{"error":"hybrid output scan panicked"}"#.to_string(),
+    };
+    java_string(&mut env, response)
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeWallet_benchmarkPrivateTransaction(
     mut env: JNIEnv,

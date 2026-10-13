@@ -225,6 +225,17 @@ fun ReceiveScreen(
                 }
             }
             
+            uiState.hybridAddress?.let { zkq1 ->
+                HybridAddressCard(
+                    address = zkq1,
+                    isDarkTheme = isDarkTheme,
+                    onCopy = {
+                        clipboardManager.setText(AnnotatedString(zkq1))
+                        showCopiedSnackbar = true
+                    }
+                )
+            }
+
             // Extra space at bottom for scrolling
             Spacer(modifier = Modifier.height(16.dp))
         }
@@ -370,13 +381,87 @@ fun ReceiveScreen(
     }
 }
 
+/**
+ * Dirección zkq1 (post-cuántica). Solo existe en pantalla cuando la red activó
+ * las salidas v2. Son unos 1.715 caracteres: se muestra abreviada, se copia
+ * entera y el QR se genera con más resolución y corrección baja para que siga
+ * siendo legible.
+ */
+@Composable
+private fun HybridAddressCard(
+    address: String,
+    isDarkTheme: Boolean,
+    onCopy: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = if (isDarkTheme) 0.dp else 4.dp
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                "Quantic address (zkq1)",
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                "Payments to this address stay private against a future quantum computer. " +
+                    "Wallets that do not support zkq1 yet can still pay your regular address.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = androidx.compose.ui.graphics.Color.White
+            ) {
+                Box(modifier = Modifier.padding(12.dp)) {
+                    QRCode(content = address, size = 260, pixels = 1040, lowCorrection = true)
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = address.take(20) + "…" + address.takeLast(12),
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                ),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            FilledTonalButton(onClick = onCopy) {
+                Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Copy zkq1 address")
+            }
+        }
+    }
+}
+
+/**
+ * [pixels] separa la resolución del bitmap del tamaño en pantalla: una zkq1
+ * necesita un QR de unos 150 módulos por lado, ilegible a 220 píxeles.
+ */
 @Composable
 fun QRCode(
     content: String,
-    size: Int
+    size: Int,
+    pixels: Int = size,
+    lowCorrection: Boolean = false
 ) {
-    val qrCodeBitmap = remember(content) {
-        generateQRCode(content, size)
+    val qrCodeBitmap = remember(content, pixels, lowCorrection) {
+        generateQRCode(content, pixels, lowCorrection)
     }
 
     if (qrCodeBitmap != null) {
@@ -388,10 +473,14 @@ fun QRCode(
     }
 }
 
-private fun generateQRCode(content: String, size: Int): Bitmap? {
+private fun generateQRCode(content: String, size: Int, lowCorrection: Boolean = false): Bitmap? {
     return try {
         val hints = mutableMapOf<com.google.zxing.EncodeHintType, Any>()
         hints[com.google.zxing.EncodeHintType.MARGIN] = 1
+        if (lowCorrection) {
+            hints[com.google.zxing.EncodeHintType.ERROR_CORRECTION] =
+                com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.L
+        }
         
         val writer = QRCodeWriter()
         val bitMatrix = writer.encode(
@@ -402,12 +491,17 @@ private fun generateQRCode(content: String, size: Int): Bitmap? {
             hints
         )
         
-        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        for (x in 0 until size) {
-            for (y in 0 until size) {
-                bitmap.setPixel(x, y, if (bitMatrix[x, y]) Color.BLACK else Color.WHITE)
+        // Un solo setPixels: con el QR de la zkq1 (1040 x 1040) pintar pixel por
+        // pixel tardaba lo suficiente como para notarse al abrir la pantalla.
+        val pixelsArray = IntArray(size * size)
+        for (y in 0 until size) {
+            val fila = y * size
+            for (x in 0 until size) {
+                pixelsArray[fila + x] = if (bitMatrix[x, y]) Color.BLACK else Color.WHITE
             }
         }
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        bitmap.setPixels(pixelsArray, 0, size, 0, 0, size, size)
         bitmap
     } catch (e: Exception) {
         null
