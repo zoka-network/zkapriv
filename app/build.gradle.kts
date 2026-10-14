@@ -23,8 +23,8 @@ android {
         applicationId = "com.zoka.zkapriv"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "2.1.0"
+        versionCode = 15
+        versionName = "2.1.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
         // Soporte para todas las arquitecturas (dispositivos físicos y emuladores)
