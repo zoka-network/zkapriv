@@ -32,7 +32,8 @@ class LocalPrivateTransferBuilder @Inject constructor(
         blockDigestsRange = api::getBlockDigestsRange,
         rawBlocksRange = api::getRawBlocksRange,
         privateTransactionRaw = api::getPrivateTransactionRaw,
-        snapshotStore = EncryptedPrivateChainSnapshotStore(secureStorage)
+        snapshotStore = EncryptedPrivateChainSnapshotStore(secureStorage),
+        privateTransactionsBatch = api::getPrivateTransactionsBatch
     )
 
     data class BuiltTransfer(

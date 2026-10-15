@@ -1,6 +1,7 @@
 package com.zoka.zkapriv.network.nativebridge
 
 import com.google.gson.JsonObject
+import com.zoka.zkapriv.network.model.PrivateTxBatchResult
 import com.zoka.zkapriv.network.model.ZokaRawBlockHeader
 import com.zoka.zkapriv.network.model.ZokaRawBlockResponse
 import com.zoka.zkapriv.network.model.ZokaRawBlocksRangeResponse
@@ -124,6 +125,40 @@ class IncrementalPrivateChainScannerTest {
     }
 
     @Test
+    fun refreshPrefetchesPendingBodiesInOneBatch() = runBlocking {
+        val fixture = ScannerFixture(
+            blocks = mutableListOf(
+                block(1, "block-1", privateTxHashes = listOf("private-1", "lost")),
+                block(2, "block-2", privateTxHashes = listOf("private-2", "private-3"))
+            ),
+            batch = { hashes ->
+                PrivateTxBatchResult(bodies = emptyMap(), missing = hashes.filter { it == "lost" })
+            }
+        )
+
+        val state = fixture.scanner.refresh("alice", 2)
+
+        assertEquals(listOf(listOf("private-1", "lost", "private-2", "private-3")), fixture.requestedBatches)
+        // Lo que el lote dio por perdido no se vuelve a pedir de a uno.
+        assertEquals(listOf("private-1", "private-2", "private-3"), fixture.requestedBodies)
+        assertEquals(listOf("private-1", "private-2", "private-3"), state.confirmedBodies.map(::bodyId))
+        assertEquals(1, state.lostBodies)
+    }
+
+    @Test
+    fun refreshFallsBackToSingleRequestsWhenTheBatchFails() = runBlocking {
+        val fixture = ScannerFixture(
+            blocks = mutableListOf(block(1, "block-1", privateTxHashes = listOf("private-1"))),
+            batch = { error("sin protocolo de lote") }
+        )
+
+        val state = fixture.scanner.refresh("alice", 1)
+
+        assertEquals(listOf("private-1"), fixture.requestedBodies)
+        assertEquals(listOf("private-1"), state.confirmedBodies.map(::bodyId))
+    }
+
+    @Test
     fun refreshStillFailsWhenABodyRequestGoesUnanswered() {
         val fixture = ScannerFixture(
             blocks = mutableListOf(block(1, "block-1", privateTxHashes = listOf("slow"))),
@@ -179,8 +214,10 @@ class IncrementalPrivateChainScannerTest {
         val blocks: MutableList<ZokaRawBlockResponse>,
         private val unavailableBodies: Set<String> = emptySet(),
         private val bodyErrors: Map<String, String> = emptyMap(),
-        snapshotStore: PrivateChainSnapshotStore = NoOpPrivateChainSnapshotStore
+        snapshotStore: PrivateChainSnapshotStore = NoOpPrivateChainSnapshotStore,
+        batch: ((List<String>) -> PrivateTxBatchResult?)? = null
     ) {
+        val requestedBatches = mutableListOf<List<String>>()
         val requestedRanges = mutableListOf<Pair<Long, Long>>()
         val requestedFullRanges = mutableListOf<Pair<Long, Long>>()
         val requestedBodies = mutableListOf<String>()
@@ -214,7 +251,11 @@ class IncrementalPrivateChainScannerTest {
                     addProperty("tx_hash", hash)
                 }
             },
-            snapshotStore = snapshotStore
+            snapshotStore = snapshotStore,
+            privateTransactionsBatch = if (batch == null) null else { hashes ->
+                requestedBatches += hashes
+                batch(hashes)
+            }
         )
     }
 

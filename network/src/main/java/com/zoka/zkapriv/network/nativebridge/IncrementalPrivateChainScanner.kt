@@ -2,6 +2,7 @@ package com.zoka.zkapriv.network.nativebridge
 
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import com.zoka.zkapriv.network.model.PrivateTxBatchResult
 import com.zoka.zkapriv.network.model.ZokaRawBlocksRangeResponse
 import com.zoka.zkapriv.network.model.requireCompleteRange
 import kotlin.coroutines.cancellation.CancellationException
@@ -10,7 +11,13 @@ internal class IncrementalPrivateChainScanner(
     private val blockDigestsRange: suspend (Long, Long) -> ZokaRawBlocksRangeResponse,
     private val rawBlocksRange: suspend (Long, Long) -> ZokaRawBlocksRangeResponse,
     private val privateTransactionRaw: suspend (String) -> JsonObject,
-    private val snapshotStore: PrivateChainSnapshotStore = NoOpPrivateChainSnapshotStore
+    private val snapshotStore: PrivateChainSnapshotStore = NoOpPrivateChainSnapshotStore,
+    /**
+     * Pide muchos cuerpos en pocos viajes y los deja en el cache del motor, de
+     * donde [privateTransactionRaw] los sirve sin salir a la red. Nulo = sin
+     * lote, todo de a uno.
+     */
+    private val privateTransactionsBatch: (suspend (List<String>) -> PrivateTxBatchResult?)? = null
 ) {
     private val gson = Gson()
     private val snapshot = restoreSnapshot()
@@ -144,6 +151,8 @@ internal class IncrementalPrivateChainScanner(
             rangeFrom = rangeTo + 1L
         }
 
+        prefetchBodies()
+
         for (hash in snapshot.confirmedHashes) {
             if (snapshot.confirmedBodiesByHash.containsKey(hash) || hash in snapshot.lostHashes) {
                 continue
@@ -186,6 +195,37 @@ internal class IncrementalPrivateChainScanner(
             },
             lostBodies = snapshot.confirmedHashes.count { it in snapshot.lostHashes }
         )
+    }
+
+    /**
+     * Trae en lote los cuerpos que faltan antes de pedirlos de a uno.
+     *
+     * Los cuerpos no se guardan en disco, así que después de reabrir la app el
+     * envío tenía que pedir los ~255 de Zenith de a uno por Tor, compitiendo con
+     * la carga del saldo: el 15/10/2026 bajó 7 en 9 minutos. El lote hace lo
+     * mismo en pocos viajes. Si falla no pasa nada: el recorrido de a uno sigue
+     * igual, solo que más lento.
+     *
+     * Lo que un par dice no tener se anota como perdido, salvo que sea más de
+     * la mitad del pedido: eso no es una cadena con cuerpos perdidos sino un par
+     * que no sabe contestar, y entonces se deja que decida el pedido de a uno.
+     */
+    private suspend fun prefetchBodies() {
+        val batch = privateTransactionsBatch ?: return
+        val pending = snapshot.confirmedHashes.filter {
+            it !in snapshot.confirmedBodiesByHash && it !in snapshot.lostHashes
+        }
+        if (pending.isEmpty()) return
+        val result = try {
+            batch(pending)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        } ?: return
+        if (result.missing.isNotEmpty() && result.missing.size * 2 <= pending.size) {
+            snapshot.lostHashes += result.missing.filter { it in pending }
+        }
     }
 
     /**
