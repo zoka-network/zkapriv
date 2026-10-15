@@ -4,6 +4,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.zoka.zkapriv.network.model.ZokaRawBlocksRangeResponse
 import com.zoka.zkapriv.network.model.requireCompleteRange
+import kotlin.coroutines.cancellation.CancellationException
 
 internal class IncrementalPrivateChainScanner(
     private val blockDigestsRange: suspend (Long, Long) -> ZokaRawBlocksRangeResponse,
@@ -17,7 +18,9 @@ internal class IncrementalPrivateChainScanner(
     internal data class PreparedChainState(
         val height: Long,
         val coinbases: List<JsonObject>,
-        val confirmedBodies: List<JsonObject>
+        val confirmedBodies: List<JsonObject>,
+        /** Cuerpos confirmados que ningún par tiene y quedaron afuera. */
+        val lostBodies: Int = 0
     )
 
     private data class ChainSnapshot(
@@ -26,7 +29,10 @@ internal class IncrementalPrivateChainScanner(
         var tipHash: String = "",
         val coinbasesById: LinkedHashMap<String, JsonObject> = linkedMapOf(),
         val confirmedHashes: LinkedHashSet<String> = linkedSetOf(),
-        val confirmedBodiesByHash: LinkedHashMap<String, JsonObject> = linkedMapOf()
+        val confirmedBodiesByHash: LinkedHashMap<String, JsonObject> = linkedMapOf(),
+        // Solo en memoria: al reabrir la app se vuelven a preguntar, por si
+        // algún par los consiguió.
+        val lostHashes: LinkedHashSet<String> = linkedSetOf()
     ) {
         fun clear() {
             ownerAddress = ""
@@ -35,6 +41,7 @@ internal class IncrementalPrivateChainScanner(
             coinbasesById.clear()
             confirmedHashes.clear()
             confirmedBodiesByHash.clear()
+            lostHashes.clear()
         }
     }
 
@@ -138,28 +145,63 @@ internal class IncrementalPrivateChainScanner(
         }
 
         for (hash in snapshot.confirmedHashes) {
-            if (!snapshot.confirmedBodiesByHash.containsKey(hash)) {
-                val body = runCatching { privateTransactionRaw(hash) }
-                    .getOrElse { error ->
-                        throw IllegalStateException(
-                            "Missing private transaction body $hash during local scan",
-                            error
-                        )
-                    }
-                check(body.get("tx_hash")?.asString == hash) {
-                    "Private transaction body $hash identifies a different transaction"
-                }
-                snapshot.confirmedBodiesByHash[hash] = body
+            if (snapshot.confirmedBodiesByHash.containsKey(hash) || hash in snapshot.lostHashes) {
+                continue
             }
+            val fetched = runCatching { privateTransactionRaw(hash) }
+            val error = fetched.exceptionOrNull()
+            if (error is CancellationException) throw error
+            if (error != null) {
+                // Un cuerpo que todos los pares dicen no tener se saltea; uno que
+                // no se pudo preguntar sigue frenando el envio.
+                //
+                // En Zenith, antes de los bundles canonicos (25.570), los cuerpos
+                // privados viajaban fuera de los bloques y 12 de esa epoca no los
+                // tiene ningun nodo. Exigirlos dejaba sin poder enviar a toda
+                // wallet movil para siempre. El motor solo usa los cuerpos para
+                // encontrar pagos propios y marcar notas gastadas: sin uno, a lo
+                // sumo no ve un pago viejo o intenta gastar una nota ya gastada,
+                // y eso ultimo lo rechaza el nodo.
+                if (!isLostEverywhere(error)) {
+                    throw IllegalStateException(
+                        "Missing private transaction body $hash during local scan",
+                        error
+                    )
+                }
+                snapshot.lostHashes += hash
+                continue
+            }
+            val body = fetched.getOrThrow()
+            check(body.get("tx_hash")?.asString == hash) {
+                "Private transaction body $hash identifies a different transaction"
+            }
+            snapshot.confirmedBodiesByHash[hash] = body
         }
 
         return PreparedChainState(
             height = height,
             coinbases = snapshot.coinbasesById.values.toList(),
-            confirmedBodies = snapshot.confirmedHashes.map { hash ->
-                snapshot.confirmedBodiesByHash.getValue(hash)
-            }
+            confirmedBodies = snapshot.confirmedHashes.mapNotNull { hash ->
+                snapshot.confirmedBodiesByHash[hash]
+            },
+            lostBodies = snapshot.confirmedHashes.count { it in snapshot.lostHashes }
         )
+    }
+
+    /**
+     * Todos los pares consultados contestaron que no tienen el cuerpo.
+     *
+     * El motor arma ese texto cuando la ultima respuesta fue un NotFound
+     * explicito (`p2p.rs`, "did not have private tx body"). Una demora, un
+     * rechazo o un par que no contesto no prueban que el cuerpo no exista, asi
+     * que no cuentan.
+     */
+    private fun isLostEverywhere(error: Throwable): Boolean {
+        val detail = generateSequence(error) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" | ")
+        return detail.contains("did not have private tx body") &&
+            !INCONCLUSIVE.containsMatchIn(detail)
     }
 
     private fun clearSnapshot() {
@@ -216,5 +258,6 @@ internal class IncrementalPrivateChainScanner(
     private companion object {
         const val SNAPSHOT_SCHEMA_VERSION = 2
         const val MAX_PERSISTED_SNAPSHOT_CHARS = 2 * 1024 * 1024
+        val INCONCLUSIVE = Regex("(?i)timed out|timeout|rate.?limit|rejected|invalid|no connected peers")
     }
 }

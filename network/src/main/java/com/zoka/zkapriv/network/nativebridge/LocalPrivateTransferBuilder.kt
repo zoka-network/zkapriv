@@ -1,6 +1,7 @@
 package com.zoka.zkapriv.network.nativebridge
 
 import android.content.Context
+import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.zoka.zkapriv.network.api.ZokaNodeApi
@@ -11,6 +12,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -61,10 +63,16 @@ class LocalPrivateTransferBuilder @Inject constructor(
         privateProofProfile: String = "private_tx"
     ): BuiltTransfer {
         val chainState = withContext(Dispatchers.IO) {
-            val height = api.getChainHeight().height
+            val height = chainHeightWithRetry()
             chainScanMutex.withLock {
                 chainScanner.refresh(from, height)
             }
+        }
+        if (chainState.lostBodies > 0) {
+            Log.w(
+                TAG,
+                "envio sin ${chainState.lostBodies} cuerpo(s) privado(s) que ningun par tiene"
+            )
         }
         val pending = pendingBodies.mapNotNull { raw ->
             runCatching { gson.fromJson(raw, JsonObject::class.java) }.getOrNull()
@@ -97,6 +105,29 @@ class LocalPrivateTransferBuilder @Inject constructor(
         val metrics = response.getAsJsonObject("metrics")
         check(hash.isNotBlank()) { "Local Zoka engine returned no transaction hash" }
         return BuiltTransfer(hash, body, metrics)
+    }
+
+    /**
+     * La altura se tantea por Tor contra los pares conectados, y un circuito
+     * lento deja el sondeo "inconcluso" aunque el nodo esté bien. Eso cortaba
+     * el envío entero antes de empezar (pasó dos veces el 15/10/2026). Se
+     * reintenta solo ese caso; cualquier otro error corta como antes.
+     */
+    private suspend fun chainHeightWithRetry(): Long {
+        var last: Exception? = null
+        for (attempt in 1..HEIGHT_ATTEMPTS) {
+            try {
+                return api.getChainHeight().height
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val detail = e.message.orEmpty()
+                if (!detail.contains("fue inconcluso") && !detail.contains("no termino")) throw e
+                Log.w(TAG, "altura inconclusa, intento $attempt de $HEIGHT_ATTEMPTS: $detail")
+                last = e
+            }
+        }
+        throw last ?: IllegalStateException("no se pudo leer la altura de la cadena")
     }
 
     private fun trustedSetupDirectory(): File {
@@ -150,5 +181,10 @@ class LocalPrivateTransferBuilder @Inject constructor(
             StandardCopyOption.ATOMIC_MOVE,
             StandardCopyOption.REPLACE_EXISTING
         )
+    }
+
+    private companion object {
+        const val TAG = "LocalPrivateTransfer"
+        const val HEIGHT_ATTEMPTS = 3
     }
 }

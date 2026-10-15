@@ -96,6 +96,51 @@ class IncrementalPrivateChainScannerTest {
         assertEquals("Missing private transaction body missing during local scan", error.message)
     }
 
+    /**
+     * Zenith tiene 12 cuerpos de antes de los bundles canonicos que ningun nodo
+     * guarda. Exigirlos dejaba sin poder enviar a toda wallet movil (15/10/2026).
+     */
+    @Test
+    fun refreshSkipsBodiesThatEveryPeerSaysAreLost() = runBlocking {
+        val fixture = ScannerFixture(
+            blocks = mutableListOf(
+                block(1, "block-1", privateTxHashes = listOf("lost", "private-1")),
+                block(2, "block-2")
+            ),
+            bodyErrors = mapOf(
+                "lost" to "no pude conseguir el cuerpo de lost: peer P did not have " +
+                    "private tx body: private tx body not found"
+            )
+        )
+
+        val first = fixture.scanner.refresh("alice", 1)
+        val second = fixture.scanner.refresh("alice", 2)
+
+        assertEquals(listOf("private-1"), first.confirmedBodies.map(::bodyId))
+        assertEquals(1, first.lostBodies)
+        assertEquals(listOf("private-1"), second.confirmedBodies.map(::bodyId))
+        // Ya se sabe que nadie lo tiene: no se vuelve a pedir en el mismo uso.
+        assertEquals(listOf("lost", "private-1"), fixture.requestedBodies)
+    }
+
+    @Test
+    fun refreshStillFailsWhenABodyRequestGoesUnanswered() {
+        val fixture = ScannerFixture(
+            blocks = mutableListOf(block(1, "block-1", privateTxHashes = listOf("slow"))),
+            bodyErrors = mapOf(
+                "slow" to "no pude conseguir el cuerpo de slow: peer P did not have " +
+                    "private tx body: x; peer Q direct request failed: Timeout while " +
+                    "waiting for a response"
+            )
+        )
+
+        val error = assertThrows(IllegalStateException::class.java) {
+            runBlocking { fixture.scanner.refresh("alice", 1) }
+        }
+
+        assertEquals("Missing private transaction body slow during local scan", error.message)
+    }
+
     @Test
     fun refreshRestoresEncryptedCheckpointWithoutPersistingBodies() = runBlocking {
         val store = RecordingSnapshotStore()
@@ -133,6 +178,7 @@ class IncrementalPrivateChainScannerTest {
     private class ScannerFixture(
         val blocks: MutableList<ZokaRawBlockResponse>,
         private val unavailableBodies: Set<String> = emptySet(),
+        private val bodyErrors: Map<String, String> = emptyMap(),
         snapshotStore: PrivateChainSnapshotStore = NoOpPrivateChainSnapshotStore
     ) {
         val requestedRanges = mutableListOf<Pair<Long, Long>>()
@@ -161,6 +207,7 @@ class IncrementalPrivateChainScannerTest {
             },
             privateTransactionRaw = { hash ->
                 requestedBodies += hash
+                bodyErrors[hash]?.let { throw IllegalStateException(it) }
                 check(hash !in unavailableBodies)
                 JsonObject().apply {
                     addProperty("id", hash)
