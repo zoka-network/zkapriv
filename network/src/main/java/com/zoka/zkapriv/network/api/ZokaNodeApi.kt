@@ -1,6 +1,7 @@
 package com.zoka.zkapriv.network.api
 
 import com.zoka.zkapriv.network.model.PrivateTxBatchResult
+import com.zoka.zkapriv.network.model.PrivateTxDigestsResult
 import com.zoka.zkapriv.network.model.ZokaAccountResponse
 import com.zoka.zkapriv.network.model.ZokaBlockResponse
 import com.zoka.zkapriv.network.model.ZokaChainHeightResponse
@@ -111,6 +112,16 @@ interface ZokaNodeApi {
     suspend fun getPrivateTransactionsBatch(
         hashes: List<String>
     ): PrivateTxBatchResult?
+
+    /**
+     * Resúmenes de transacciones privadas: las salidas y las marcas de gasto,
+     * sin pruebas ni anillo (1–10 KB contra 59–346 KB de un cuerpo).
+     *
+     * Con ellos el motor elige qué cuerpos bajar. `null` = esta vía no está
+     * disponible (un nodo que no conoce el protocolo): quien llama vuelve a
+     * bajar los cuerpos como antes.
+     */
+    suspend fun getPrivateTxDigests(hashes: List<String>): PrivateTxDigestsResult? = null
 
     /// Build, sign and broadcast a Zoka private transaction on behalf of
     /// the client. The body carries the encrypted BIP-39 entropy; the node

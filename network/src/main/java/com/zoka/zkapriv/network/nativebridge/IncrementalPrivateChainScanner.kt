@@ -1,8 +1,10 @@
 package com.zoka.zkapriv.network.nativebridge
 
 import com.google.gson.Gson
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.zoka.zkapriv.network.model.PrivateTxBatchResult
+import com.zoka.zkapriv.network.model.PrivateTxDigestsResult
 import com.zoka.zkapriv.network.model.ZokaRawBlocksRangeResponse
 import com.zoka.zkapriv.network.model.requireCompleteRange
 import kotlin.coroutines.cancellation.CancellationException
@@ -17,7 +19,11 @@ internal class IncrementalPrivateChainScanner(
      * donde [privateTransactionRaw] los sirve sin salir a la red. Nulo = sin
      * lote, todo de a uno.
      */
-    private val privateTransactionsBatch: (suspend (List<String>) -> PrivateTxBatchResult?)? = null
+    private val privateTransactionsBatch: (suspend (List<String>) -> PrivateTxBatchResult?)? = null,
+    /** Resúmenes de transacciones privadas. Nulo = sin resúmenes, todo por cuerpos. */
+    private val privateTxDigests: (suspend (List<String>) -> PrivateTxDigestsResult?)? = null,
+    /** El escaneo con resúmenes del motor (`scan_with_digests_json`). */
+    private val digestScan: ((String) -> String)? = null
 ) {
     private val gson = Gson()
     private val snapshot = restoreSnapshot()
@@ -39,7 +45,13 @@ internal class IncrementalPrivateChainScanner(
         val confirmedBodiesByHash: LinkedHashMap<String, JsonObject> = linkedMapOf(),
         // Solo en memoria: al reabrir la app se vuelven a preguntar, por si
         // algún par los consiguió.
-        val lostHashes: LinkedHashSet<String> = linkedSetOf()
+        val lostHashes: LinkedHashSet<String> = linkedSetOf(),
+        // Resúmenes por hash, solo en memoria: son datos públicos y se piden en
+        // un viaje.
+        val digestsByHash: LinkedHashMap<String, JsonObject> = linkedMapOf(),
+        // Cuerpos que pidió el escaneo con resúmenes: solo esos se le pasan al
+        // motor, aunque el camino viejo haya dejado otros en memoria.
+        val digestBodyHashes: LinkedHashSet<String> = linkedSetOf()
     ) {
         fun clear() {
             ownerAddress = ""
@@ -49,6 +61,8 @@ internal class IncrementalPrivateChainScanner(
             confirmedHashes.clear()
             confirmedBodiesByHash.clear()
             lostHashes.clear()
+            digestsByHash.clear()
+            digestBodyHashes.clear()
         }
     }
 
@@ -61,7 +75,38 @@ internal class IncrementalPrivateChainScanner(
         val confirmedHashes: LinkedHashSet<String>
     )
 
+    /**
+     * Todo lo que el motor necesita para gastar, con el cuerpo de cada
+     * transacción privada de la cadena. Es el camino viejo: ~25 MB por Tor en
+     * Zenith. Queda para nodos que no conocen los resúmenes.
+     */
     suspend fun refresh(from: String, height: Long): PreparedChainState {
+        refreshChain(from, height)
+        return allBodies(height)
+    }
+
+    /**
+     * Lo mismo que [refresh], pero bajando solo los cuerpos que tocan a la
+     * wallet.
+     *
+     * Pide los resúmenes de todas las transacciones privadas (1–10 KB cada
+     * uno) y le pregunta al motor, con la semilla, cuáles le tocan: primero los
+     * pagos que reconoce, después los gastos de esas notas. Baja esos cuerpos y
+     * repite hasta que el motor no pida más. Con un nodo que no conoce el
+     * protocolo vuelve a [refresh].
+     *
+     * Los resúmenes no se pueden verificar contra el hash, así que solo eligen
+     * qué bajar; lo que cuenta es el cuerpo, que el motor valida.
+     */
+    suspend fun refreshRelevant(from: String, height: Long, seedHex: String): PreparedChainState {
+        refreshChain(from, height)
+        val scan = digestScan ?: return allBodies(height)
+        val fetchDigests = privateTxDigests ?: return allBodies(height)
+        if (!ensureDigests(fetchDigests)) return allBodies(height)
+        return relevantBodies(height, seedHex, scan)
+    }
+
+    private suspend fun refreshChain(from: String, height: Long) {
         if (snapshot.ownerAddress.isNotEmpty() && snapshot.ownerAddress != from) {
             clearSnapshot()
         }
@@ -151,9 +196,111 @@ internal class IncrementalPrivateChainScanner(
             rangeFrom = rangeTo + 1L
         }
 
-        prefetchBodies()
+    }
 
-        for (hash in snapshot.confirmedHashes) {
+    private suspend fun allBodies(height: Long): PreparedChainState {
+        fetchBodies(snapshot.confirmedHashes.toList())
+        return PreparedChainState(
+            height = height,
+            coinbases = snapshot.coinbasesById.values.toList(),
+            confirmedBodies = snapshot.confirmedHashes.mapNotNull { hash ->
+                snapshot.confirmedBodiesByHash[hash]
+            },
+            lostBodies = snapshot.confirmedHashes.count { it in snapshot.lostHashes }
+        )
+    }
+
+    /**
+     * Trae los resúmenes que faltan. `false` = esta vía no sirve con estos
+     * pares (no conocen el protocolo) y hay que bajar los cuerpos.
+     */
+    private suspend fun ensureDigests(
+        fetch: suspend (List<String>) -> PrivateTxDigestsResult?
+    ): Boolean {
+        val pending = snapshot.confirmedHashes.filter {
+            it !in snapshot.digestsByHash && it !in snapshot.lostHashes
+        }
+        if (pending.isEmpty()) return true
+        val result = try {
+            fetch(pending)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        } ?: return false
+        val wanted = pending.toHashSet()
+        for (digest in result.digests) {
+            val hash = digest.get("tx_hash")?.asString ?: continue
+            if (hash in wanted) snapshot.digestsByHash[hash] = digest
+        }
+        // Un resumen que ningún par tiene es un cuerpo que ningún par tiene:
+        // queda afuera, con la misma salvaguarda que el lote de cuerpos.
+        if (result.missing.isNotEmpty() && result.missing.size * 2 <= pending.size) {
+            snapshot.lostHashes += result.missing.filter { it in wanted }
+        }
+        val stillMissing = pending.count {
+            it !in snapshot.digestsByHash && it !in snapshot.lostHashes
+        }
+        if (stillMissing == 0) return true
+        // Un nodo sin el protocolo no contesta ninguno: se baja todo como antes.
+        if (result.digests.isEmpty()) return false
+        throw IllegalStateException(
+            "Faltan los resumenes de $stillMissing transacciones privadas; reintenta"
+        )
+    }
+
+    private suspend fun relevantBodies(
+        height: Long,
+        seedHex: String,
+        scan: (String) -> String
+    ): PreparedChainState {
+        val ordered = snapshot.confirmedHashes.filter {
+            it !in snapshot.lostHashes && it in snapshot.digestsByHash
+        }
+        repeat(MAX_DIGEST_SCAN_ROUNDS) {
+            val request = JsonObject().apply {
+                addProperty("seed_hex", seedHex.removePrefix("0x"))
+                addProperty("current_height", height)
+                add("coinbase_outputs", gson.toJsonTree(snapshot.coinbasesById.values.toList()))
+                add("digests", JsonArray().apply {
+                    ordered.forEach { hash -> snapshot.digestsByHash[hash]?.let { add(it) } }
+                })
+                add("bodies", JsonArray().apply {
+                    snapshot.digestBodyHashes.forEach { hash ->
+                        snapshot.confirmedBodiesByHash[hash]?.let { add(it) }
+                    }
+                })
+                add("lost", gson.toJsonTree(snapshot.lostHashes.toList()))
+            }
+            val response = gson.fromJson(scan(gson.toJson(request)), JsonObject::class.java)
+            response.get("error")?.takeUnless { it.isJsonNull }?.asString?.let {
+                throw IllegalStateException(it)
+            }
+            val need = response.getAsJsonArray("need_bodies")
+                ?.mapNotNull { runCatching { it.asString }.getOrNull() }
+                .orEmpty()
+                .filter { it !in snapshot.confirmedBodiesByHash && it !in snapshot.lostHashes }
+            if (need.isEmpty()) {
+                val relevant = response.getAsJsonArray("relevant")
+                    ?.mapNotNull { runCatching { it.asString }.getOrNull() }
+                    .orEmpty()
+                return PreparedChainState(
+                    height = height,
+                    coinbases = snapshot.coinbasesById.values.toList(),
+                    confirmedBodies = relevant.mapNotNull { snapshot.confirmedBodiesByHash[it] },
+                    lostBodies = snapshot.confirmedHashes.count { it in snapshot.lostHashes }
+                )
+            }
+            fetchBodies(need)
+            snapshot.digestBodyHashes += need.filter { it in snapshot.confirmedBodiesByHash }
+        }
+        throw IllegalStateException("El escaneo con resumenes no termino; reintenta")
+    }
+
+    private suspend fun fetchBodies(hashes: List<String>) {
+        prefetchBodies(hashes)
+
+        for (hash in hashes) {
             if (snapshot.confirmedBodiesByHash.containsKey(hash) || hash in snapshot.lostHashes) {
                 continue
             }
@@ -186,15 +333,6 @@ internal class IncrementalPrivateChainScanner(
             }
             snapshot.confirmedBodiesByHash[hash] = body
         }
-
-        return PreparedChainState(
-            height = height,
-            coinbases = snapshot.coinbasesById.values.toList(),
-            confirmedBodies = snapshot.confirmedHashes.mapNotNull { hash ->
-                snapshot.confirmedBodiesByHash[hash]
-            },
-            lostBodies = snapshot.confirmedHashes.count { it in snapshot.lostHashes }
-        )
     }
 
     /**
@@ -210,9 +348,9 @@ internal class IncrementalPrivateChainScanner(
      * la mitad del pedido: eso no es una cadena con cuerpos perdidos sino un par
      * que no sabe contestar, y entonces se deja que decida el pedido de a uno.
      */
-    private suspend fun prefetchBodies() {
+    private suspend fun prefetchBodies(hashes: List<String>) {
         val batch = privateTransactionsBatch ?: return
-        val pending = snapshot.confirmedHashes.filter {
+        val pending = hashes.filter {
             it !in snapshot.confirmedBodiesByHash && it !in snapshot.lostHashes
         }
         if (pending.isEmpty()) return
@@ -299,5 +437,10 @@ internal class IncrementalPrivateChainScanner(
         const val SNAPSHOT_SCHEMA_VERSION = 2
         const val MAX_PERSISTED_SNAPSHOT_CHARS = 2 * 1024 * 1024
         val INCONCLUSIVE = Regex("(?i)timed out|timeout|rate.?limit|rejected|invalid|no connected peers")
+        /**
+         * Vueltas de "el motor pide cuerpos, se bajan, se vuelve a preguntar".
+         * Alcanzan dos (pagos, después sus gastos); el resto es margen.
+         */
+        const val MAX_DIGEST_SCAN_ROUNDS = 6
     }
 }

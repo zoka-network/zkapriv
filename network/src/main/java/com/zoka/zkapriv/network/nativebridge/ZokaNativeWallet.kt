@@ -61,6 +61,19 @@ object ZokaNativeWallet {
     /** El mismo tope que `zoka::mobile::MOBILE_HYBRID_SCAN_MAX_OUTPUTS`. */
     const val MAX_HYBRID_OUTPUTS_PER_CALL = 512
 
+    /**
+     * Recorre la cadena con resúmenes: con la semilla, los resúmenes y los
+     * cuerpos ya bajados, devuelve `need_bodies` (los cuerpos que tocan a la
+     * wallet y faltan), `relevant` y el saldo. Ver `zoka::mobile::scan_with_digests_json`.
+     */
+    fun walletScanWithDigests(requestJson: String): String {
+        val error = loadError
+        check(error == null) {
+            "Local Zoka transaction engine is not packaged for this device: ${error?.message}"
+        }
+        return scanWithDigests(requestJson)
+    }
+
     fun benchmarkV2I1Lab(trustedSetupDirectory: String): String {
         val error = loadError
         check(error == null) {
@@ -77,6 +90,9 @@ object ZokaNativeWallet {
 
     @JvmStatic
     private external fun scanHybridOutputs(requestJson: String): String
+
+    @JvmStatic
+    private external fun scanWithDigests(requestJson: String): String
 
     @JvmStatic
     private external fun benchmarkPrivateTransaction(

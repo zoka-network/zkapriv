@@ -1,7 +1,10 @@
 package com.zoka.zkapriv.network.nativebridge
 
+import com.google.gson.Gson
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.zoka.zkapriv.network.model.PrivateTxBatchResult
+import com.zoka.zkapriv.network.model.PrivateTxDigestsResult
 import com.zoka.zkapriv.network.model.ZokaRawBlockHeader
 import com.zoka.zkapriv.network.model.ZokaRawBlockResponse
 import com.zoka.zkapriv.network.model.ZokaRawBlocksRangeResponse
@@ -159,6 +162,84 @@ class IncrementalPrivateChainScannerTest {
     }
 
     @Test
+    fun refreshRelevantDownloadsOnlyTheBodiesTheEngineAsksFor() = runBlocking {
+        val fixture = ScannerFixture(
+            blocks = mutableListOf(
+                block(1, "block-1", privateTxHashes = listOf("ajena-1", "mia")),
+                block(2, "block-2", privateTxHashes = listOf("ajena-2"))
+            ),
+            digests = { hashes -> PrivateTxDigestsResult(hashes.map(::digest), emptyList()) },
+            scan = { request ->
+                // El motor pide "mia"; cuando la tiene, dice que es la única relevante.
+                val bodies = request.getAsJsonArray("bodies").map { it.asJsonObject.get("id").asString }
+                JsonObject().apply {
+                    if ("mia" in bodies) {
+                        add("need_bodies", JsonArray())
+                        add("relevant", JsonArray().apply { add("mia") })
+                    } else {
+                        add("need_bodies", JsonArray().apply { add("mia") })
+                    }
+                }
+            }
+        )
+
+        val state = fixture.scanner.refreshRelevant("alice", 2, "00")
+
+        assertEquals(listOf("mia"), fixture.requestedBodies)
+        assertEquals(listOf("mia"), state.confirmedBodies.map(::bodyId))
+        assertEquals(listOf(listOf("ajena-1", "mia", "ajena-2")), fixture.requestedDigests)
+        // Los resúmenes viajan en orden de cadena, que es el que usa el motor.
+        assertEquals(
+            listOf("ajena-1", "mia", "ajena-2"),
+            fixture.scanRequests.first().getAsJsonArray("digests").map {
+                it.asJsonObject.get("tx_hash").asString
+            }
+        )
+    }
+
+    @Test
+    fun refreshRelevantFallsBackToAllBodiesWhenPeersLackTheProtocol() = runBlocking {
+        val fixture = ScannerFixture(
+            blocks = mutableListOf(block(1, "block-1", privateTxHashes = listOf("a", "b"))),
+            digests = { hashes -> PrivateTxDigestsResult(emptyList(), emptyList(), hashes) },
+            scan = { error("con un nodo viejo no se le pregunta al motor") }
+        )
+
+        val state = fixture.scanner.refreshRelevant("alice", 1, "00")
+
+        assertEquals(listOf("a", "b"), fixture.requestedBodies)
+        assertEquals(listOf("a", "b"), state.confirmedBodies.map(::bodyId))
+        assertEquals(0, fixture.scanRequests.size)
+    }
+
+    @Test
+    fun refreshRelevantLeavesOutTransactionsNobodyHas() = runBlocking {
+        val fixture = ScannerFixture(
+            blocks = mutableListOf(block(1, "block-1", privateTxHashes = listOf("a", "b", "perdida"))),
+            digests = { hashes ->
+                PrivateTxDigestsResult(
+                    hashes.filter { it != "perdida" }.map(::digest),
+                    listOf("perdida")
+                )
+            },
+            scan = {
+                JsonObject().apply {
+                    add("need_bodies", JsonArray())
+                    add("relevant", JsonArray())
+                }
+            }
+        )
+
+        val state = fixture.scanner.refreshRelevant("alice", 1, "00")
+
+        assertEquals(1, state.lostBodies)
+        val request = fixture.scanRequests.single()
+        assertEquals(listOf("perdida"), request.getAsJsonArray("lost").map { it.asString })
+        assertEquals(2, request.getAsJsonArray("digests").size())
+        assertEquals(emptyList<String>(), fixture.requestedBodies)
+    }
+
+    @Test
     fun refreshStillFailsWhenABodyRequestGoesUnanswered() {
         val fixture = ScannerFixture(
             blocks = mutableListOf(block(1, "block-1", privateTxHashes = listOf("slow"))),
@@ -215,9 +296,13 @@ class IncrementalPrivateChainScannerTest {
         private val unavailableBodies: Set<String> = emptySet(),
         private val bodyErrors: Map<String, String> = emptyMap(),
         snapshotStore: PrivateChainSnapshotStore = NoOpPrivateChainSnapshotStore,
-        batch: ((List<String>) -> PrivateTxBatchResult?)? = null
+        batch: ((List<String>) -> PrivateTxBatchResult?)? = null,
+        digests: ((List<String>) -> PrivateTxDigestsResult?)? = null,
+        scan: ((JsonObject) -> JsonObject)? = null
     ) {
         val requestedBatches = mutableListOf<List<String>>()
+        val requestedDigests = mutableListOf<List<String>>()
+        val scanRequests = mutableListOf<JsonObject>()
         val requestedRanges = mutableListOf<Pair<Long, Long>>()
         val requestedFullRanges = mutableListOf<Pair<Long, Long>>()
         val requestedBodies = mutableListOf<String>()
@@ -255,6 +340,15 @@ class IncrementalPrivateChainScannerTest {
             privateTransactionsBatch = if (batch == null) null else { hashes ->
                 requestedBatches += hashes
                 batch(hashes)
+            },
+            privateTxDigests = if (digests == null) null else { hashes ->
+                requestedDigests += hashes
+                digests(hashes)
+            },
+            digestScan = if (scan == null) null else { json ->
+                val request = Gson().fromJson(json, JsonObject::class.java)
+                scanRequests += request
+                Gson().toJson(scan(request))
             }
         )
     }
@@ -316,6 +410,12 @@ class IncrementalPrivateChainScannerTest {
         )
 
         private fun bodyId(body: JsonObject): String = body.get("id").asString
+
+        private fun digest(hash: String): JsonObject = JsonObject().apply {
+            addProperty("tx_hash", hash)
+            add("spend_tags", JsonArray())
+            add("outputs", JsonArray())
+        }
 
         private fun coinbaseRecipient(coinbase: JsonObject): String =
             coinbase.getAsJsonObject("output").get("recipient_address").asString

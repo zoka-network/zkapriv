@@ -33,7 +33,9 @@ class LocalPrivateTransferBuilder @Inject constructor(
         rawBlocksRange = api::getRawBlocksRange,
         privateTransactionRaw = api::getPrivateTransactionRaw,
         snapshotStore = EncryptedPrivateChainSnapshotStore(secureStorage),
-        privateTransactionsBatch = api::getPrivateTransactionsBatch
+        privateTransactionsBatch = api::getPrivateTransactionsBatch,
+        privateTxDigests = api::getPrivateTxDigests,
+        digestScan = ZokaNativeWallet::walletScanWithDigests
     )
 
     data class BuiltTransfer(
@@ -66,7 +68,9 @@ class LocalPrivateTransferBuilder @Inject constructor(
         val chainState = withContext(Dispatchers.IO) {
             val height = chainHeightWithRetry()
             chainScanMutex.withLock {
-                chainScanner.refresh(from, height)
+                // Solo los cuerpos que tocan a la wallet, elegidos con
+                // resúmenes; con un nodo sin el protocolo, todos como antes.
+                chainScanner.refreshRelevant(from, height, seedHex)
             }
         }
         if (chainState.lostBodies > 0) {

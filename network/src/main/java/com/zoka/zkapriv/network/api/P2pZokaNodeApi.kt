@@ -55,6 +55,8 @@ internal object MobileNativeTimeoutPolicy {
     private const val MOBILE_CALL_SLACK_MS = 15_000L
     /** Cuantos cuerpos entran en un pedido del lado nativo. */
     private const val MAX_BODIES_PER_REQUEST = 100
+    /** `MAX_DIGESTS_PER_REQUEST` del protocolo `/zoka/private-tx-digests/1`. */
+    private const val MAX_DIGESTS_PER_REQUEST = 500
     private const val MOBILE_DIGESTS_BATCH_SIZE = 1_000L
     private const val MOBILE_BLOCKS_BATCH_SIZE = 32L
     private const val KOTLIN_JNI_DELIVERY_SLACK_MS = 15_000L
@@ -73,6 +75,19 @@ internal object MobileNativeTimeoutPolicy {
      */
     fun privateTxBodiesMs(cuantos: Int): Long {
         val lotes = ((cuantos + MAX_BODIES_PER_REQUEST - 1) / MAX_BODIES_PER_REQUEST)
+            .coerceIn(1, 8)
+        return outerTimeout(
+            saturatingAdd(MOBILE_PEER_WAIT_MS, MOBILE_CHUNK_WAIT_MS * lotes)
+        )
+    }
+
+    /**
+     * Plazo de un pedido de resúmenes, espejo del `private_digests_call_timeout`
+     * del motor: entran hasta 500 por pedido, así que la cadena entera de
+     * Zenith es un solo lote.
+     */
+    fun privateTxDigestsMs(cuantos: Int): Long {
+        val lotes = ((cuantos + MAX_DIGESTS_PER_REQUEST - 1) / MAX_DIGESTS_PER_REQUEST)
             .coerceIn(1, 8)
         return outerTimeout(
             saturatingAdd(MOBILE_PEER_WAIT_MS, MOBILE_CHUNK_WAIT_MS * lotes)
@@ -221,6 +236,35 @@ class P2pZokaNodeApi(
             ?.mapNotNull { runCatching { it.asString }.getOrNull() }
             ?: emptyList()
         com.zoka.zkapriv.network.model.PrivateTxBatchResult(bodies, missing, unanswered)
+    }
+
+    override suspend fun getPrivateTxDigests(
+        hashes: List<String>
+    ): com.zoka.zkapriv.network.model.PrivateTxDigestsResult? = withContext(Dispatchers.IO) {
+        if (hashes.isEmpty()) {
+            return@withContext com.zoka.zkapriv.network.model.PrivateTxDigestsResult(
+                emptyList(),
+                emptyList()
+            )
+        }
+        asegurarRed()
+        val json = processNativeCommandGate.run(
+            MobileNativeTimeoutPolicy.privateTxDigestsMs(hashes.size)
+        ) {
+            leerJson(red.privateTxDigests(hashes))
+        }
+        // Los resúmenes van crudos: solo los interpreta el motor. Kotlin mira
+        // el hash para ordenarlos y nada más.
+        val digests = json.getAsJsonArray("digests")
+            ?.mapNotNull { runCatching { it.asJsonObject }.getOrNull() }
+            ?: emptyList()
+        val missing = json.getAsJsonArray("missing")
+            ?.mapNotNull { runCatching { it.asString }.getOrNull() }
+            ?: emptyList()
+        val unanswered = json.getAsJsonArray("unanswered")
+            ?.mapNotNull { runCatching { it.asString }.getOrNull() }
+            ?: emptyList()
+        com.zoka.zkapriv.network.model.PrivateTxDigestsResult(digests, missing, unanswered)
     }
 
     override suspend fun peerCount(): Int? = withContext(Dispatchers.IO) {

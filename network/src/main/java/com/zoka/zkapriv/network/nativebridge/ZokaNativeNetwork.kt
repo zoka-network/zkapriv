@@ -192,6 +192,19 @@ object ZokaNativeNetwork {
         return privateTxBodies0(json)
     }
 
+    /**
+     * Resúmenes de transacciones privadas: `{"digests":[...],"missing":[...],"unanswered":[...]}`.
+     *
+     * Un resumen pesa entre 1 y 10 KB contra los 59–346 KB de un cuerpo: con
+     * esto la wallet elige qué cuerpos bajar en vez de bajarlos todos.
+     */
+    fun privateTxDigests(txHashes: List<String>): String {
+        requireLibrary()
+        if (txHashes.isEmpty()) return """{"digests":[],"missing":[],"unanswered":[]}"""
+        val json = org.json.JSONArray(txHashes).toString()
+        return privateTxDigests0(json)
+    }
+
     private val PROXY_REGEX = Regex("\"proxy\"\\s*:\\s*\"([^\"]+)\"")
 
     @JvmStatic private external fun startTor0(cacheDir: String): String
@@ -200,6 +213,7 @@ object ZokaNativeNetwork {
     @JvmStatic private external fun blocksDigestRange0(from: Long, to: Long): String
     @JvmStatic private external fun privateTxBody0(txHash: String): String
     @JvmStatic private external fun privateTxBodies0(txHashesJson: String): String
+    @JvmStatic private external fun privateTxDigests0(txHashesJson: String): String
     @JvmStatic private external fun connect0(configJson: String): String
     @JvmStatic private external fun publishPrivateTx0(txJson: String): String
     @JvmStatic private external fun status0(): String

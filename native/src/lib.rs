@@ -120,6 +120,24 @@ pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeWall
     java_string(&mut env, response)
 }
 
+/// Recorre la cadena con resúmenes y dice qué cuerpos hacen falta.
+///
+/// Con la semilla, los resúmenes de la cadena y los cuerpos que ya se bajaron,
+/// el motor responde qué otros cuerpos tocan a la wallet (`need_bodies`) y,
+/// cuando no falta ninguno, cuáles son los relevantes y el saldo. Así el
+/// teléfono baja unos pocos cuerpos en lugar de todos (ver
+/// `zoka::private_wallet::digest`).
+#[no_mangle]
+pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeWallet_scanWithDigests(
+    mut env: JNIEnv,
+    _class: JClass,
+    request_json: JString,
+) -> jstring {
+    responder_json(&mut env, request_json, "el escaneo con resumenes entro en panico", |json| {
+        zoka::mobile::scan_with_digests_json(json)
+    })
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeWallet_benchmarkPrivateTransaction(
     mut env: JNIEnv,
@@ -406,6 +424,28 @@ pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeNetw
             let hashes: Vec<String> = serde_json::from_str(json)
                 .map_err(|e| format!("la lista de hashes no es un JSON array valido: {e}"))?;
             zoka::mobile_net::private_tx_bodies_json(&hashes)
+        },
+    )
+}
+
+/// Resúmenes de transacciones privadas: `{"digests":[...],"missing":[...],"unanswered":[...]}`.
+///
+/// Un resumen pesa entre 1 y 10 KB contra los 59–346 KB de un cuerpo. Mismo
+/// formato de entrada que `privateTxBodies0`: los hashes como JSON array.
+#[no_mangle]
+pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeNetwork_privateTxDigests0(
+    mut env: JNIEnv,
+    _class: JClass,
+    tx_hashes_json: JString,
+) -> jstring {
+    responder_json(
+        &mut env,
+        tx_hashes_json,
+        "la busqueda de resumenes de transacciones entro en panico",
+        |json| {
+            let hashes: Vec<String> = serde_json::from_str(json)
+                .map_err(|e| format!("la lista de hashes no es un JSON array valido: {e}"))?;
+            zoka::mobile_net::private_tx_digests_json(&hashes)
         },
     )
 }

@@ -296,3 +296,16 @@ data class PrivateTxBatchResult(
      */
     val unanswered: List<String> = emptyList()
 )
+
+/**
+ * Lo que volvió de un pedido de resúmenes de transacciones privadas.
+ *
+ * Los resúmenes van crudos (`zoka::private_wallet::digest::PrivateTxDigest`):
+ * los interpreta el motor, no Kotlin. Igual que en el lote de cuerpos,
+ * `missing` es "un par dijo que no lo tiene" y `unanswered` es "nadie contestó".
+ */
+data class PrivateTxDigestsResult(
+    val digests: List<com.google.gson.JsonObject>,
+    val missing: List<String>,
+    val unanswered: List<String> = emptyList()
+)

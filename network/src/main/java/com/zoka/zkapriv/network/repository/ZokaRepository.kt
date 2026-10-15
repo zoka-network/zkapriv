@@ -1321,10 +1321,17 @@ class ZokaRepository @Inject constructor(
                 // y dejo el saldo en cero. "No lo tengo" y "no te pude
                 // contestar" son cosas distintas.
                 //
-                // Y una salvaguarda: si un solo lote dice que faltan casi todas,
-                // eso no es una cadena con cuerpos perdidos, es un par que no
-                // sabe responder. No se anota nada y se reintenta.
-                val casiTodas = traidos.missing.size > hashesPendientes.size / 2
+                // Y una salvaguarda: si un solo lote dice que faltan casi todas
+                // las de la cadena, eso no es una cadena con cuerpos perdidos,
+                // es un par que no sabe responder. No se anota nada y se
+                // reintenta.
+                //
+                // Se compara contra la cadena entera y no contra lo pedido en
+                // esta pasada. Contra lo pedido, una vez procesado todo lo demás
+                // solo quedaban pendientes los 12 cuerpos perdidos de Zenith:
+                // 12 de 12 era "casi todas", nunca se anotaban y se volvían a
+                // pedir en cada carga del saldo (15/10/2026, un minuto por carga).
+                val casiTodas = traidos.missing.size > allPrivateTxHashes.size / 2
                 if (traidos.missing.isNotEmpty() && !casiTodas) {
                     for (hash in traidos.missing) {
                         missingPrivateTxCache.add(hash)
@@ -1645,9 +1652,26 @@ class ZokaRepository @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            // Por P2P el "no lo tengo" llega como excepción del motor, no como
+            // un 404: sin reconocerlo, un cuerpo perdido se volvía a pedir en
+            // cada carga. Una demora o un rechazo no cuentan.
+            if (pareceCuerpoPerdido(e)) {
+                missingPrivateTxCache.add(txHash)
+                guardarCuerposPerdidos()
+            }
             Log.w("ZokaRepository", "Skipping $txHash: ${e.message}")
             null
         }
+    }
+
+    /** Todos los pares consultados dijeron que no tienen el cuerpo. */
+    private fun pareceCuerpoPerdido(error: Throwable): Boolean {
+        val detalle = generateSequence(error) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" | ")
+        return detalle.contains("did not have private tx body") &&
+            !Regex("(?i)timed out|timeout|rate.?limit|rejected|invalid|no connected peers")
+                .containsMatchIn(detalle)
     }
 
     private suspend fun retryPrivateTransactionAfterRateLimit(txHash: String): ZokaPrivateTransactionResponse? {
