@@ -1,9 +1,12 @@
 package com.zoka.zkapriv.ui.qrscanner
 
 import android.Manifest
+import android.util.Size
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.*
@@ -37,6 +40,10 @@ fun QrScannerScreen(
     val cameraPermissionState = rememberPermissionState(Manifest.permission.CAMERA)
     var flashEnabled by remember { mutableStateOf(false) }
     var hasScanned by remember { mutableStateOf(false) }
+    // Las direcciones zkq1 llegan en varios QR (MultiPartQr): se juntan acá y
+    // recién con todas las partes se entrega el texto completo.
+    val collector = remember { MultiPartQrCollector() }
+    var partsProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
     LaunchedEffect(Unit) {
         if (!cameraPermissionState.status.isGranted) {
@@ -78,8 +85,20 @@ fun QrScannerScreen(
                     CameraPreview(
                         onQrCodeScanned = { qrCode ->
                             if (!hasScanned) {
-                                hasScanned = true
-                                onQrCodeScanned(qrCode)
+                                if (MultiPartQr.isPart(qrCode)) {
+                                    when (val result = collector.accept(qrCode)) {
+                                        is MultiPartQrCollector.Result.Complete -> {
+                                            hasScanned = true
+                                            onQrCodeScanned(result.text)
+                                        }
+                                        is MultiPartQrCollector.Result.Partial ->
+                                            partsProgress = result.have to result.total
+                                        MultiPartQrCollector.Result.Ignored -> Unit
+                                    }
+                                } else {
+                                    hasScanned = true
+                                    onQrCodeScanned(qrCode)
+                                }
                             }
                         },
                         flashEnabled = flashEnabled
@@ -137,6 +156,26 @@ fun QrScannerScreen(
                         shape = MaterialTheme.shapes.large
                     ) {}
                 }
+                partsProgress?.let { (have, total) ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(bottom = 48.dp),
+                        contentAlignment = Alignment.BottomCenter
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                            shape = MaterialTheme.shapes.medium
+                        ) {
+                            Text(
+                                "Reading address: part $have of $total. Keep the camera on the code.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -168,7 +207,19 @@ fun CameraPreview(
                     it.setSurfaceProvider(previewView.surfaceProvider)
                 }
 
+                // CameraX analiza a 640x480 si no se le pide otra cosa, y a esa
+                // resolución un QR denso no se lee desde una pantalla. 1280x720
+                // alcanza de sobra para las partes de una zkq1 y para un QR común.
+                val resolution = ResolutionSelector.Builder()
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            Size(1280, 720),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER
+                        )
+                    )
+                    .build()
                 val imageAnalysis = ImageAnalysis.Builder()
+                    .setResolutionSelector(resolution)
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build()
                     .also {

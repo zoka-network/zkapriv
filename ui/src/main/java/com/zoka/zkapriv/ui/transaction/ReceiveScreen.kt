@@ -428,9 +428,17 @@ private fun HybridAddressCard(
                 color = androidx.compose.ui.graphics.Color.White
             ) {
                 Box(modifier = Modifier.padding(12.dp)) {
-                    QRCode(content = address, size = 260, pixels = 1040, lowCorrection = true)
+                    AnimatedQRCode(content = address, size = 260, pixels = 780)
                 }
             }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                "The code changes every half second: keep the other wallet's camera on it " +
+                    "until it has read every part.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                modifier = Modifier.fillMaxWidth()
+            )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = address.take(20) + "…" + address.takeLast(12),
@@ -445,6 +453,51 @@ private fun HybridAddressCard(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Copy zkq1 address")
             }
+        }
+    }
+}
+
+/**
+ * Un texto largo como QR animado: sus partes ([MultiPartQr]) se alternan cada
+ * [frameMillis]. Un texto corto queda como un QR común y quieto.
+ *
+ * Los bitmaps de todas las partes se generan una sola vez: regenerarlos en
+ * cada cuadro se notaría en un teléfono de 32 bits.
+ */
+@Composable
+fun AnimatedQRCode(
+    content: String,
+    size: Int,
+    pixels: Int = size,
+    frameMillis: Long = 500L
+) {
+    val parts = remember(content) {
+        com.zoka.zkapriv.ui.qrscanner.MultiPartQr.split(content)
+    }
+    val bitmaps = remember(parts, pixels) { parts.map { generateQRCode(it, pixels) } }
+    var frame by remember(content) { mutableIntStateOf(0) }
+    LaunchedEffect(parts) {
+        if (parts.size > 1) {
+            while (true) {
+                kotlinx.coroutines.delay(frameMillis)
+                frame = (frame + 1) % parts.size
+            }
+        }
+    }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        bitmaps.getOrNull(frame)?.let { bitmap ->
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "QR Code",
+                modifier = Modifier.size(size.dp)
+            )
+        }
+        if (parts.size > 1) {
+            Text(
+                "Part ${frame + 1} of ${parts.size}",
+                style = MaterialTheme.typography.labelSmall,
+                color = androidx.compose.ui.graphics.Color.Black
+            )
         }
     }
 }
