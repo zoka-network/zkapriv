@@ -40,6 +40,11 @@ tokio = { version = "1", features = ["rt", "net", "io-util", "macros"] }
 # cambia nada mientras la red no fije la altura de activacion.
 pq-experimental = ["zoka/pq-experimental"]
 
+# Motor de Zoka Quantic (Ironwood + X-Wing): wallet, sincronizacion por
+# bloques compactos, envios y /zoka-quantic/light/1. Arrastra orchard y Halo 2.
+# build-android.ps1 -Features "pq-experimental,quantic" la compila.
+quantic = ["pq-experimental", "zoka/quantic"]
+
 # Aggressive release optimization for the on-device Groth16 prover. This is a
 # standalone crate (not a workspace member), so its own [profile.release]
 # governs the .so. LTO + a single codegen unit let the optimizer inline across

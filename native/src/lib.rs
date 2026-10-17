@@ -1,3 +1,5 @@
+#[cfg(feature = "quantic")]
+mod quantic;
 mod tor;
 
 use jni::objects::{JClass, JString};

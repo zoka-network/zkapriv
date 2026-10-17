@@ -1,3 +1,7 @@
+# -Features: lo que se compila en el motor. Por omision, el de los releases
+# (pq-experimental). Con Zoka Quantic: -Features "pq-experimental,quantic".
+param([string]$Features = "pq-experimental")
+
 $ErrorActionPreference = "Stop"
 
 $nativeRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -47,9 +51,9 @@ try {
     # instalara un APK con la aplicacion nueva sobre el motor de red viejo, y
     # los tiempos se interpretaran como si el cambio estuviera adentro. Un
     # script de compilacion que miente es peor que uno que no existe.
-    cargo ndk -t arm64-v8a -P 26 -o jniLibs build --release --features pq-experimental
+    cargo ndk -t arm64-v8a -P 26 -o jniLibs build --release --features $Features
     if ($LASTEXITCODE -ne 0) { throw "cargo ndk fallo para arm64-v8a (codigo $LASTEXITCODE)" }
-    cargo ndk -t armeabi-v7a -P 26 -o jniLibs build --release -j 1 --features pq-experimental
+    cargo ndk -t armeabi-v7a -P 26 -o jniLibs build --release -j 1 --features $Features
     if ($LASTEXITCODE -ne 0) { throw "cargo ndk fallo para armeabi-v7a (codigo $LASTEXITCODE)" }
 
     # libzoka_mobile.so links the shared C++ runtime (libc++_shared.so), so it
