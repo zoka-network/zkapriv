@@ -11,9 +11,22 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.FlashlightOff
-import androidx.compose.material.icons.filled.FlashlightOn
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.FlashlightOff
+import androidx.compose.material.icons.outlined.FlashlightOn
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size as GeoSize
+import androidx.compose.ui.graphics.StrokeCap
+import com.zoka.zkapriv.ui.components.MeterBar
+import com.zoka.zkapriv.ui.components.Notice
+import com.zoka.zkapriv.ui.components.Pill
+import com.zoka.zkapriv.ui.components.ZButton
+import com.zoka.zkapriv.ui.components.ZButtonText
+import com.zoka.zkapriv.ui.components.ZButtonVariant
+import com.zoka.zkapriv.ui.components.ZkTone
+import com.zoka.zkapriv.ui.theme.Zk
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,21 +42,24 @@ import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.shouldShowRationale
 import java.util.concurrent.Executors
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
+/**
+ * Lector QR de ZKAPriv 3: cámara a pantalla completa, marco con esquinas
+ * rosas y, para una dirección completa, el avance de sus partes.
+ */
+@OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun QrScannerScreen(
     onNavigateBack: () -> Unit,
     onQrCodeScanned: (String) -> Unit
 ) {
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
     val cameraPermissionState = rememberPermissionState(Manifest.permission.CAMERA)
     var flashEnabled by remember { mutableStateOf(false) }
     var hasScanned by remember { mutableStateOf(false) }
-    // Las direcciones zkq1 llegan en varios QR (MultiPartQr): se juntan acá y
-    // recién con todas las partes se entrega el texto completo.
+    // Las direcciones completas llegan en varios QR (MultiPartQr): se juntan
+    // acá y recién con todas las partes se entrega el texto completo.
     val collector = remember { MultiPartQrCollector() }
     var partsProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    val c = Zk.colors
 
     LaunchedEffect(Unit) {
         if (!cameraPermissionState.status.isGranted) {
@@ -51,132 +67,130 @@ fun QrScannerScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Scan QR Code") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { flashEnabled = !flashEnabled }) {
-                        Icon(
-                            if (flashEnabled) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff,
-                            contentDescription = "Toggle Flash"
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface
-                )
-            )
-        }
-    ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(c.background)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+    ) {
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            when {
-                cameraPermissionState.status.isGranted -> {
-                    CameraPreview(
-                        onQrCodeScanned = { qrCode ->
-                            if (!hasScanned) {
-                                if (MultiPartQr.isPart(qrCode)) {
-                                    when (val result = collector.accept(qrCode)) {
-                                        is MultiPartQrCollector.Result.Complete -> {
-                                            hasScanned = true
-                                            onQrCodeScanned(result.text)
-                                        }
-                                        is MultiPartQrCollector.Result.Partial ->
-                                            partsProgress = result.have to result.total
-                                        MultiPartQrCollector.Result.Ignored -> Unit
-                                    }
-                                } else {
-                                    hasScanned = true
-                                    onQrCodeScanned(qrCode)
-                                }
-                            }
-                        },
-                        flashEnabled = flashEnabled
+            IconButton(onClick = onNavigateBack) {
+                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = c.text)
+            }
+            Text(
+                "Scan",
+                style = MaterialTheme.typography.titleLarge,
+                color = c.text,
+                modifier = Modifier.weight(1f)
+            )
+            if (cameraPermissionState.status.isGranted) {
+                IconButton(onClick = { flashEnabled = !flashEnabled }) {
+                    Icon(
+                        if (flashEnabled) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
+                        contentDescription = "Flashlight",
+                        tint = if (flashEnabled) c.accent else c.text
                     )
                 }
-                cameraPermissionState.status.shouldShowRationale -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            "Camera permission is needed to scan QR codes",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(onClick = { cameraPermissionState.launchPermissionRequest() }) {
-                            Text("Grant Permission")
-                        }
-                    }
-                }
-                else -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            "Camera permission is required",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(onClick = { cameraPermissionState.launchPermissionRequest() }) {
-                            Text("Request Permission")
-                        }
-                    }
-                }
             }
-
-            // Scanner frame overlay
+        }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
             if (cameraPermissionState.status.isGranted) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Surface(
-                        modifier = Modifier.size(250.dp),
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-                        shape = MaterialTheme.shapes.large
-                    ) {}
-                }
-                partsProgress?.let { (have, total) ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(bottom = 48.dp),
-                        contentAlignment = Alignment.BottomCenter
-                    ) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                            shape = MaterialTheme.shapes.medium
-                        ) {
-                            Text(
-                                "Reading address: part $have of $total. Keep the camera on the code.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
-                            )
+                CameraPreview(
+                    onQrCodeScanned = { qrCode ->
+                        if (!hasScanned) {
+                            if (MultiPartQr.isPart(qrCode)) {
+                                when (val result = collector.accept(qrCode)) {
+                                    is MultiPartQrCollector.Result.Complete -> {
+                                        hasScanned = true
+                                        onQrCodeScanned(result.text)
+                                    }
+                                    is MultiPartQrCollector.Result.Partial ->
+                                        partsProgress = result.have to result.total
+                                    MultiPartQrCollector.Result.Ignored -> Unit
+                                }
+                            } else {
+                                hasScanned = true
+                                onQrCodeScanned(qrCode)
+                            }
                         }
+                    },
+                    flashEnabled = flashEnabled
+                )
+                ScanFrame(Modifier.fillMaxSize())
+                Column(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    val progress = partsProgress
+                    if (progress != null) {
+                        Pill("Part ${progress.first} of ${progress.second}", tone = ZkTone.Accent)
+                        MeterBar(progress.first.toFloat() / progress.second)
+                        Text(
+                            "Keep the camera on the code: the parts come in any order.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.text
+                        )
+                    } else {
+                        Text(
+                            "Point at a Zoka address or payment QR",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = c.text
+                        )
                     }
                 }
+            } else {
+                Column(
+                    Modifier.fillMaxSize().padding(24.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Notice(
+                        if (cameraPermissionState.status.shouldShowRationale)
+                            "ZKAPriv uses the camera only to read QR codes, on this phone."
+                        else "Allow the camera to scan QR codes.",
+                        title = "Camera",
+                        tone = ZkTone.Info
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    ZButton(
+                        onClick = { cameraPermissionState.launchPermissionRequest() },
+                        modifier = Modifier.fillMaxWidth(),
+                        variant = ZButtonVariant.Primary
+                    ) { ZButtonText("Allow camera") }
+                }
             }
+        }
+    }
+}
+
+/** Oscurece alrededor del recuadro y dibuja sus esquinas en rosa. */
+@Composable
+private fun ScanFrame(modifier: Modifier) {
+    val accent = Zk.colors.accent
+    val shade = Zk.colors.background.copy(alpha = 0.55f)
+    Canvas(modifier) {
+        val side = size.minDimension * 0.7f
+        val left = (size.width - side) / 2f
+        val top = (size.height - side) / 2f
+        drawRect(shade, size = GeoSize(size.width, top))
+        drawRect(shade, topLeft = Offset(0f, top + side), size = GeoSize(size.width, size.height - top - side))
+        drawRect(shade, topLeft = Offset(0f, top), size = GeoSize(left, side))
+        drawRect(shade, topLeft = Offset(left + side, top), size = GeoSize(size.width - left - side, side))
+        val arm = side * 0.14f
+        val stroke = 4.dp.toPx()
+        listOf(
+            Offset(left, top) to Offset(1f, 1f),
+            Offset(left + side, top) to Offset(-1f, 1f),
+            Offset(left, top + side) to Offset(1f, -1f),
+            Offset(left + side, top + side) to Offset(-1f, -1f),
+        ).forEach { (corner, dir) ->
+            drawLine(accent, corner, Offset(corner.x + arm * dir.x, corner.y), stroke, StrokeCap.Round)
+            drawLine(accent, corner, Offset(corner.x, corner.y + arm * dir.y), stroke, StrokeCap.Round)
         }
     }
 }

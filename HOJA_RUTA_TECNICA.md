@@ -1,5 +1,13 @@
 # Hoja de Ruta Tecnica - zkapriv Android
 
+> **ZKAPriv 3 (30/10/2026 en adelante):** la app pasa a Zoka Quantic Testnet v2
+> (STARK) con el diseno de ZSilent. Lo vigente esta en
+> [docs/PLAN-ZKAPRIV-3.md](docs/PLAN-ZKAPRIV-3.md) (plan y etapas),
+> [docs/INVENTARIO-ZKAPRIV-3.md](docs/INVENTARIO-ZKAPRIV-3.md) (lo que habia) y
+> [docs/MOTOR-V2.md](docs/MOTOR-V2.md) (motor nativo y red). La app nueva vive en
+> `ui/src/main/java/com/zoka/zkapriv/ui/quantic/`; lo que sigue de este archivo
+> describe la 2.x (zka1, REST) y queda como historia.
+
 ## Objetivo
 
 Convertir `zkapriv` en la wallet Android de Zoka, manteniendo solo el motor y las pantallas que aplican a esta blockchain:

@@ -1,5 +1,7 @@
 #[cfg(feature = "quantic")]
 mod quantic;
+#[cfg(feature = "quantic-pq")]
+mod stark;
 mod tor;
 
 use jni::objects::{JClass, JString};

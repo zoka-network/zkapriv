@@ -3,6 +3,7 @@ package com.zoka.zkapriv.core.preferences
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -25,6 +26,7 @@ class ThemeManager @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     private val THEME_KEY = stringPreferencesKey("theme_mode")
+    private val ANIMATIONS_KEY = booleanPreferencesKey("animations")
 
     val themeMode: Flow<ThemeMode> = context.dataStore.data
         .map { preferences ->
@@ -32,9 +34,20 @@ class ThemeManager @Inject constructor(
                 "LIGHT" -> ThemeMode.LIGHT
                 "DARK" -> ThemeMode.DARK
                 "SYSTEM" -> ThemeMode.SYSTEM
-                else -> ThemeMode.LIGHT // Default to Light theme
+                // ZKAPriv 3: oscuro por defecto, como ZSilent.
+                else -> ThemeMode.DARK
             }
         }
+
+    /** Animaciones de la app; el sistema puede apagarlas aparte. */
+    val animations: Flow<Boolean> = context.dataStore.data
+        .map { preferences -> preferences[ANIMATIONS_KEY] ?: true }
+
+    suspend fun setAnimations(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[ANIMATIONS_KEY] = enabled
+        }
+    }
 
     suspend fun setThemeMode(mode: ThemeMode) {
         context.dataStore.edit { preferences ->

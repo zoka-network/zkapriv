@@ -32,7 +32,18 @@ zoka = { path = "../..", default-features = false, features = ["mobile"] }
 arti-client = { version = "0.45", default-features = false, features = ["tokio", "rustls", "onion-service-client"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 tor-rtcompat = "0.45"
-tokio = { version = "1", features = ["rt", "net", "io-util", "macros"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "io-util", "macros", "time"] }
+
+# Motor v2 (ZKAPriv 3, src/stark.rs): la frase de ZSilent, el estado cifrado
+# de la billetera liviana y el JSON del puente. Todas ya estan en el arbol de
+# dependencias del nodo, en estas versiones.
+bip39 = "2"
+chacha20poly1305 = "0.10"
+hex = "0.4"
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+zeroize = "1"
 
 [features]
 # Direcciones zkq1 y salidas v2 (X-Wing). build-android.ps1 la activa para los
@@ -44,6 +55,11 @@ pq-experimental = ["zoka/pq-experimental"]
 # bloques compactos, envios y /zoka-quantic/light/1. Arrastra orchard y Halo 2.
 # build-android.ps1 -Features "pq-experimental,quantic" la compila.
 quantic = ["pq-experimental", "zoka/quantic"]
+
+# Zoka Quantic Testnet v2 (STARK), la red de ZKAPriv 3: billetera liviana,
+# prueba en el telefono y red por stark_mobile (directo o por Tor).
+# build-android.ps1 -Features "quantic-pq" la compila.
+quantic-pq = ["pq-experimental", "zoka/quantic-pq"]
 
 # Aggressive release optimization for the on-device Groth16 prover. This is a
 # standalone crate (not a workspace member), so its own [profile.release]
