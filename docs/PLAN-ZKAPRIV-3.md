@@ -47,7 +47,7 @@ componentes de `ui/components/Components.kt` y las reglas de
   en `#0A0709`. Tinta de gráficos y progreso: `#D9659F`. Enlaces: `#E8BDD5`.
 - **Fondos y bordes:** el fondo oscuro es `#000000`, con superficies
   `#020202` / `#070707` / `#0F0F0F` y bordes `#1B1B1B` / `#333333`. El tema
-  claro va por defecto, como en ZSilent.
+  oscuro va por defecto, como en ZSilent (corregido el 30/10: decía claro).
 - **Estados:** éxito `#6CD092`, aviso `#EFCA61`, peligro `#FF645F`. Solo
   significan estado.
 - **Tipografía:** Inter para la interfaz y JetBrains Mono para todo dato
