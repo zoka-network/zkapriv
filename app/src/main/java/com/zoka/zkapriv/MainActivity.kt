@@ -46,6 +46,7 @@ import com.zoka.zkapriv.ui.transaction.SendViewModel
 import com.zoka.zkapriv.ui.charts.ChartsScreen
 import com.zoka.zkapriv.ui.portfolio.PortfolioScreen
 import com.zoka.zkapriv.ui.theme.ZkaPrivTheme
+import com.zoka.zkapriv.ui.gallery.ZkGallery
 import com.zoka.zkapriv.core.preferences.ThemeManager
 import com.zoka.zkapriv.core.preferences.ThemeMode
 import dagger.hilt.android.AndroidEntryPoint
@@ -73,6 +74,18 @@ class MainActivity : FragmentActivity() {
             android.view.WindowManager.LayoutParams.FLAG_SECURE,
             android.view.WindowManager.LayoutParams.FLAG_SECURE
         )
+
+        // Galería de componentes, solo en depuración y sin datos de la
+        // billetera: por eso es la única pantalla que admite capturas.
+        if (BuildConfig.DEBUG && intent.getStringExtra("screen") == "gallery") {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            enableEdgeToEdge()
+            setContent {
+                var dark by remember { mutableStateOf(intent.getStringExtra("theme") != "light") }
+                ZkGallery(dark = dark, onToggleTheme = { dark = !dark })
+            }
+            return
+        }
 
         // Sonda del puente de red nativo.
         //

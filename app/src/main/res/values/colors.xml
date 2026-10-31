@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Background color for adaptive icon -->
-    <color name="ic_launcher_background">#FFFFFF</color>
-    <color name="splash_background">#FFFFFF</color>
+    <!-- The background of the Z-Q mark, and of the splash in both themes. -->
+    <color name="ic_launcher_background">#000000</color>
+    <color name="splash_background">#000000</color>
 </resources>
