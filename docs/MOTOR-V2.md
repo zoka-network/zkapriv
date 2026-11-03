@@ -53,6 +53,16 @@ Las ramas: `zkapriv-v2-motor` en el repo del nodo y `zkapriv-v2` en este.
   recién al madurar, porque antes no entra al árbol (ni se puede gastar).
 - **Estado de otro formato:** se descarta y se vuelve a leer la cadena (es
   una caché; la frase es lo único que importa).
+- **Las semillas son solo la primera puerta (3/11):** en cada `sync` el nodo
+  comparte los pares que conoce (`PEERS`) y la app los guarda en
+  `state_dir/peers-<chain_id>.json` (sin cifrar: son datos públicos), hasta
+  64. Cada conexión prueba hasta 2 pares que respondieron en la última
+  semana, después las semillas (en orden al azar) y al final hasta 4 de los
+  otros. Se guardan solo el id y las .onion, nunca IPs ni hosts de afuera: un
+  nodo malicioso no puede hacer que los teléfonos marquen la IP de un
+  tercero. Una lista llena de pares inventados no desplaza a los que
+  respondieron. Lo que sirve un par aprendido se verifica igual que lo de una
+  semilla (cabeceras y checkpoint).
 
 ## Funciones (`ZokaStark`)
 
@@ -64,12 +74,12 @@ Las ramas: `zkapriv-v2-motor` en el repo del nodo y `zkapriv-v2` en este.
 | `checkAddress(text)` | `valid`, `kind` (`full` / `short`) |
 | `status(phrase, stateDir)` | saldo, historial, `next`, `in_sync`, `pending` (sin red) |
 | `addPages(phrase, stateDir, pages)` | lo mismo, después de sumar páginas HTTPS |
-| `sync(phrase, stateDir, torProxy)` | lo mismo, tras hasta 20 páginas por P2P y el checkpoint de la semilla |
+| `sync(phrase, stateDir, torProxy)` | lo mismo, tras hasta 20 páginas por P2P y el checkpoint del nodo, y `peers` (cuántos pares conoce la app) |
 | `confirmCheckpoint(phrase, stateDir, json)` | lo mismo, tras confirmar un checkpoint traído por HTTPS |
 | `quote(phrase, stateDir, amount)` | `enough`, `fee_atoms`, `inputs`, `max_sendable_atoms` |
 | `send(phrase, stateDir, to, amount, memo, torProxy)` | `txid`, `fee_atoms`, `expiry`, `proving_ms` |
-| `resolve(short, torProxy)` | la dirección completa o null |
-| `publish(phrase, torProxy)` | si la semilla la tomó |
+| `resolve(short, torProxy, stateDir?)` | la dirección completa o null |
+| `publish(phrase, torProxy, stateDir?)` | si el nodo la tomó |
 
 `to` puede ser la dirección completa o la corta; la corta se resuelve en el
 directorio de la red y se comprueba contra la corta.

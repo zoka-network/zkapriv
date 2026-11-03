@@ -75,7 +75,12 @@ object ZokaStark {
         )
     }
 
-    /** Hasta 20 páginas pedidas a una semilla por P2P; repetir mientras `in_sync` sea falso. */
+    /**
+     * Hasta 20 páginas pedidas por P2P a un par aprendido o a una semilla;
+     * repetir mientras `in_sync` sea falso. El nodo comparte de paso los
+     * pares que conoce (se guardan en `stateDir`) y `peers` dice cuántos
+     * conoce la app: las semillas dejan de ser la única puerta.
+     */
     fun sync(phrase: String, stateDir: String, torProxy: String?, birth: Int? = null): JSONObject =
         call(base(phrase, stateDir, torProxy).apply { birth?.let { put("birth", it) } }, ::sync0)
 
@@ -108,15 +113,18 @@ object ZokaStark {
         ::send0,
     )
 
-    /** La dirección completa de una corta, o null si la red no la conoce. */
-    fun resolve(short: String, torProxy: String?): String? {
-        val reply = call(base(null, null, torProxy).put("address", short), ::resolve0)
+    /**
+     * La dirección completa de una corta, o null si la red no la conoce. Con
+     * `stateDir` usa (y amplía) los pares aprendidos.
+     */
+    fun resolve(short: String, torProxy: String?, stateDir: String? = null): String? {
+        val reply = call(base(null, stateDir, torProxy).put("address", short), ::resolve0)
         return if (reply.isNull("address")) null else reply.getString("address")
     }
 
     /** Publica la dirección propia para que su forma corta sirva. */
-    fun publish(phrase: String, torProxy: String?): Boolean =
-        call(base(phrase, null, torProxy), ::publish0).getBoolean("published")
+    fun publish(phrase: String, torProxy: String?, stateDir: String? = null): Boolean =
+        call(base(phrase, stateDir, torProxy), ::publish0).getBoolean("published")
 
     @JvmStatic private external fun newPhrase0(): String
     @JvmStatic private external fun walletInfo0(request: String): String

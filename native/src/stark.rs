@@ -45,7 +45,7 @@ use zoka::quantic::{
         },
         Profile,
     },
-    stark_mobile::{self, Route},
+    stark_mobile::{self, PhonePeers, Route},
 };
 
 use super::{configure_mobile_prover_runtime, responder_json};
@@ -226,6 +226,41 @@ fn save(path: &Path, seed: &[u8; 32], wallet: &LightWallet) -> Result<(), String
     fs::rename(&temporary, path).map_err(err)
 }
 
+// ── Pares aprendidos ─────────────────────────────────────────────────────────
+
+/// Los pares que compartieron los nodos con los que habló la app
+/// (`stark_mobile::PhonePeers`), junto al estado. Las semillas son solo la
+/// primera puerta. No son secretos y no van cifrados; si el archivo falta o
+/// no se entiende, se empieza con las semillas.
+fn peers_path(request: &Request) -> Result<Option<PathBuf>, String> {
+    let chain_id = request.profile()?.chain_id;
+    Ok(request
+        .state_dir
+        .as_deref()
+        .map(|dir| Path::new(dir).join(format!("peers-{chain_id}.json"))))
+}
+
+fn load_peers(path: Option<&Path>, profile: Profile) -> PhonePeers {
+    path.and_then(|p| fs::read(p).ok())
+        .map(|bytes| PhonePeers::decode(&bytes, profile))
+        .unwrap_or_else(|| PhonePeers::new(profile))
+}
+
+/// Temporal y renombre, de a uno: `resolve` y `publish` no toman el candado
+/// del estado. Un error no corta la operación: la lista es una ayuda.
+fn save_peers(path: Option<&Path>, peers: &PhonePeers) {
+    static FILE: Mutex<()> = Mutex::new(());
+    let Some(path) = path else { return };
+    let _file = FILE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let temporary = path.with_extension("tmp");
+    if fs::write(&temporary, peers.encode()).is_ok() {
+        let _ = fs::rename(&temporary, path);
+    }
+}
+
 // ── Respuestas ───────────────────────────────────────────────────────────────
 
 fn zka(atoms: u64) -> String {
@@ -359,8 +394,9 @@ fn add_pages(json: &str) -> Result<String, String> {
     Ok(status(&wallet).to_string())
 }
 
-/// Páginas pedidas a una semilla por P2P (directo o por Tor), hasta
-/// [`PAGES_PER_CALL`].
+/// Páginas pedidas por P2P (directo o por Tor) a un par aprendido o a una
+/// semilla, hasta [`PAGES_PER_CALL`]. De paso, el nodo comparte los pares
+/// que conoce. La respuesta suma `peers`: cuántos conoce la app.
 fn sync(json: &str) -> Result<String, String> {
     let request = Request::parse(json)?;
     let profile = request.profile()?;
@@ -370,8 +406,11 @@ fn sync(json: &str) -> Result<String, String> {
     let path = request.state_path()?;
     let mut wallet = load(&path, &seed, profile, request.birth.unwrap_or(1))?;
     let seeds = stark_mobile::builtin_seeds(profile)?;
+    let peers_path = peers_path(&request)?;
+    let mut peers = load_peers(peers_path.as_deref(), profile);
     let outcome: Result<(), String> = runtime()?.block_on(async {
-        let mut client = stark_mobile::connect(&seeds, route).await?;
+        let mut client = stark_mobile::connect_with(&mut peers, &seeds, route).await?;
+        stark_mobile::learn_from(&mut client, &mut peers, &seeds).await;
         for _ in 0..PAGES_PER_CALL {
             let page = stark_mobile::page(&mut client, wallet.next()).await?;
             let empty = page.blocks.is_empty();
@@ -389,10 +428,13 @@ fn sync(json: &str) -> Result<String, String> {
         client.close().await;
         confirmed
     });
+    save_peers(peers_path.as_deref(), &peers);
     // Lo leído hasta un error también vale.
     save(&path, &seed, &wallet)?;
     outcome?;
-    Ok(status(&wallet).to_string())
+    let mut reply = status(&wallet);
+    reply["peers"] = json!(peers.len());
+    Ok(reply.to_string())
 }
 
 /// Un checkpoint traído por HTTPS (`/checkpoint`): se verifica su firma acá y
@@ -478,13 +520,17 @@ fn send(json: &str) -> Result<String, String> {
     let path = request.state_path()?;
     let mut wallet = load(&path, &seed, profile, 1)?;
     let seeds = stark_mobile::builtin_seeds(profile)?;
+    let peers_path = peers_path(&request)?;
+    let mut peers = load_peers(peers_path.as_deref(), profile);
     let rt = runtime()?;
     let to = rt.block_on(async {
-        let mut client = stark_mobile::connect(&seeds, route).await?;
+        let mut client = stark_mobile::connect_with(&mut peers, &seeds, route).await?;
         let to = recipient(&to_text, profile, &mut client).await;
         client.close().await;
         to
-    })?;
+    });
+    save_peers(peers_path.as_deref(), &peers);
+    let to = to?;
     let plan = wallet.plan(&account, to, amount, memo.as_bytes()).map_err(err)?;
     let fee = plan.fee;
     let expiry = plan.expiry;
@@ -502,12 +548,15 @@ fn send(json: &str) -> Result<String, String> {
     wallet.reserve(&tx).map_err(err)?;
     save(&path, &seed, &wallet)?;
     let sent = rt.block_on(async {
-        let mut client = stark_mobile::connect(&seeds, route).await.map_err(|e| (false, e))?;
+        let mut client = stark_mobile::connect_with(&mut peers, &seeds, route)
+            .await
+            .map_err(|e| (false, e))?;
         let sent = stark_mobile::submit(&mut client, &tx).await;
         client.close().await;
-        // Un rechazo de la semilla es seguro: el pago no está en ningún lado.
+        // Un rechazo del nodo es seguro: el pago no está en ningún lado.
         sent.map_err(|e| (e.starts_with("STARK peer rejected"), e))
     });
+    save_peers(peers_path.as_deref(), &peers);
     match sent {
         Ok(txid) => Ok(json!({
             "txid": hex::encode(txid),
@@ -538,12 +587,17 @@ fn resolve(json: &str) -> Result<String, String> {
     let short = ShortAddress::decode(request.address.as_deref().ok_or("falta address")?.trim(), profile.network)
         .map_err(|_| "no es una direccion corta de esta red".to_string())?;
     let seeds = stark_mobile::builtin_seeds(profile)?;
+    let peers_path = peers_path(&request)?;
+    let mut peers = load_peers(peers_path.as_deref(), profile);
+    let route = request.route()?;
     let found = runtime()?.block_on(async {
-        let mut client = stark_mobile::connect(&seeds, request.route()?).await?;
+        let mut client = stark_mobile::connect_with(&mut peers, &seeds, route).await?;
         let found = stark_mobile::resolve(&mut client, &short, profile.network).await;
         client.close().await;
         found
-    })?;
+    });
+    save_peers(peers_path.as_deref(), &peers);
+    let found = found?;
     Ok(match found {
         Some(full) => json!({ "address": full.encode().map_err(err)? }),
         None => json!({ "address": null }),
@@ -556,12 +610,17 @@ fn publish(json: &str) -> Result<String, String> {
     let profile = request.profile()?;
     let (account, _) = request.account()?;
     let seeds = stark_mobile::builtin_seeds(profile)?;
+    let peers_path = peers_path(&request)?;
+    let mut peers = load_peers(peers_path.as_deref(), profile);
+    let route = request.route()?;
     let published = runtime()?.block_on(async {
-        let mut client = stark_mobile::connect(&seeds, request.route()?).await?;
+        let mut client = stark_mobile::connect_with(&mut peers, &seeds, route).await?;
         let published = stark_mobile::publish(&mut client, &account.address()).await;
         client.close().await;
         published
-    })?;
+    });
+    save_peers(peers_path.as_deref(), &peers);
+    let published = published?;
     Ok(json!({ "published": published }).to_string())
 }
 
