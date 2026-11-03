@@ -40,6 +40,19 @@ Las ramas: `zkapriv-v2-motor` en el repo del nodo y `zkapriv-v2` en este.
   llegó, quedan reservadas hasta el vencimiento. Un pago a la vez.
 - **Cambio de rama:** la billetera vuelve a una copia asentada (100 a 200
   bloques bajo la punta) y relee desde `next`.
+- **Lo leído se verifica (3/11):** cada página trae la cabecera de su bloque
+  (`merkle_root`, `state_root`, `nonce`). La billetera recalcula el estado que
+  la cabecera compromete (raíz del árbol, notas, emisión, acumulador de
+  nulificadores) y el hash del bloque (`zoka_pq_pool::commitment`, igual al de
+  consenso por prueba): una página que esconde o inventa una salida se
+  rechaza. Después confirma la cadena contra el último checkpoint del equipo
+  (firma híbrida Ed25519 + ML-DSA-65, obligatoria en la v2): `verified` dice
+  hasta qué bloque. `sync` lo hace solo con la semilla; por HTTPS, la app
+  trae `/checkpoint` y llama a `confirmCheckpoint`. Si el checkpoint nombra
+  otro bloque, la billetera vuelve a empezar. Una coinbase escondida se nota
+  recién al madurar, porque antes no entra al árbol (ni se puede gastar).
+- **Estado de otro formato:** se descarta y se vuelve a leer la cadena (es
+  una caché; la frase es lo único que importa).
 
 ## Funciones (`ZokaStark`)
 
@@ -51,7 +64,8 @@ Las ramas: `zkapriv-v2-motor` en el repo del nodo y `zkapriv-v2` en este.
 | `checkAddress(text)` | `valid`, `kind` (`full` / `short`) |
 | `status(phrase, stateDir)` | saldo, historial, `next`, `in_sync`, `pending` (sin red) |
 | `addPages(phrase, stateDir, pages)` | lo mismo, después de sumar páginas HTTPS |
-| `sync(phrase, stateDir, torProxy)` | lo mismo, tras hasta 20 páginas por P2P |
+| `sync(phrase, stateDir, torProxy)` | lo mismo, tras hasta 20 páginas por P2P y el checkpoint de la semilla |
+| `confirmCheckpoint(phrase, stateDir, json)` | lo mismo, tras confirmar un checkpoint traído por HTTPS |
 | `quote(phrase, stateDir, amount)` | `enough`, `fee_atoms`, `inputs`, `max_sendable_atoms` |
 | `send(phrase, stateDir, to, amount, memo, torProxy)` | `txid`, `fee_atoms`, `expiry`, `proving_ms` |
 | `resolve(short, torProxy)` | la dirección completa o null |
@@ -69,6 +83,13 @@ directorio de la red y se comprueba contra la corta.
 Arma arm64-v8a y armeabi-v7a (el teléfono de pruebas es de 32 bits). Los
 `.so` de la 2.1.4 quedaron respaldados en
 `C:\Users\mderramus\ZOKA-respaldos\zkapriv-jniLibs-2.1.4-20261030`.
+
+## Pendiente en la app
+
+- `QuanticWallet` (lado HTTPS) tiene que traer `https://api.zokascan.cc/checkpoint`
+  después de las páginas y pasarlo a `confirmCheckpoint`; la pantalla de inicio
+  puede mostrar "Verificado hasta el bloque N". No se tocó todavía porque el
+  archivo tiene cambios sin commitear de otra sesión (31/10).
 
 ## Pendiente para que funcione contra la testnet real
 

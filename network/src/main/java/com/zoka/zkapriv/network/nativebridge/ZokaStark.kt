@@ -79,6 +79,15 @@ object ZokaStark {
     fun sync(phrase: String, stateDir: String, torProxy: String?, birth: Int? = null): JSONObject =
         call(base(phrase, stateDir, torProxy).apply { birth?.let { put("birth", it) } }, ::sync0)
 
+    /**
+     * Confirma lo leído contra un checkpoint traído por HTTPS (el JSON de
+     * `/checkpoint`): Rust verifica la firma híbrida (Ed25519 + ML-DSA-65) del
+     * equipo. Devuelve el estado, con `verified`; si no coincide, la billetera
+     * vuelve a empezar y es una [StarkException].
+     */
+    fun confirmCheckpoint(phrase: String, stateDir: String, checkpointJson: String): JSONObject =
+        call(base(phrase, stateDir).put("checkpoint", JSONObject(checkpointJson)), ::confirmCheckpoint0)
+
     /** `enough`, `fee_atoms`, `inputs`, `max_sendable_atoms` (y `reason` si no alcanza). */
     fun quote(phrase: String, stateDir: String, amountAtoms: Long): JSONObject =
         call(base(phrase, stateDir).put("amount_atoms", amountAtoms), ::quote0)
@@ -117,6 +126,7 @@ object ZokaStark {
     @JvmStatic private external fun addPages0(request: String): String
     @JvmStatic private external fun sync0(request: String): String
     @JvmStatic private external fun quote0(request: String): String
+    @JvmStatic private external fun confirmCheckpoint0(request: String): String
     @JvmStatic private external fun send0(request: String): String
     @JvmStatic private external fun resolve0(request: String): String
     @JvmStatic private external fun publish0(request: String): String

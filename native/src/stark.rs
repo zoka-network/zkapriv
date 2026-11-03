@@ -54,7 +54,9 @@ use super::{configure_mobile_prover_runtime, responder_json};
 /// una): la app vuelve a llamar mientras `in_sync` sea falso, y entre
 /// llamadas puede mostrar el avance.
 const PAGES_PER_CALL: usize = 20;
-const STATE_MAGIC: &[u8; 6] = b"ZKLW2\0";
+/// La versión del formato del estado. Uno de otra versión es una caché
+/// vieja: se descarta y la billetera vuelve a leer la cadena.
+const STATE_MAGIC: &[u8; 6] = b"ZKLW3\0";
 /// Pila del hilo que prueba: la de los hilos de Android no alcanza para todo.
 const PROVER_STACK: usize = 64 * 1024 * 1024;
 
@@ -109,6 +111,9 @@ struct Request {
     amount_atoms: Option<u64>,
     #[serde(default)]
     memo: Option<String>,
+    /// Un checkpoint firmado, tal como lo da `/checkpoint` de la API.
+    #[serde(default)]
+    checkpoint: Option<Value>,
 }
 
 fn default_network() -> String {
@@ -175,10 +180,15 @@ fn load(path: &Path, seed: &[u8; 32], profile: Profile, birth: u32) -> Result<Li
         }
         Err(e) => return Err(err(e)),
     };
-    let body = bytes
+    let Some(body) = bytes
         .strip_prefix(STATE_MAGIC.as_slice())
         .filter(|body| body.len() > 12)
-        .ok_or("el estado guardado no es de esta version")?;
+    else {
+        if bytes.starts_with(b"ZKLW") {
+            return LightWallet::new(profile.network, birth.max(1)).map_err(err);
+        }
+        return Err("el estado guardado no es de ZKAPriv".into());
+    };
     let key = state_key(seed, profile.network);
     let cipher = ChaCha20Poly1305::new(Key::from_slice(key.as_ref()));
     let plain = Zeroizing::new(
@@ -265,6 +275,9 @@ fn status(wallet: &LightWallet) -> Value {
         "reserved_atoms": balance.reserved_atoms,
         "max_sendable_atoms": balance.max_sendable_atoms,
         "notes": balance.notes,
+        // Hasta acá lo leído coincide con un checkpoint firmado por el
+        // equipo con Ed25519 y ML-DSA-65.
+        "verified": balance.verified,
         "pending": wallet.pending().map(|p| json!({
             "txid": hex::encode(p.txid),
             "expiry": p.expiry,
@@ -367,12 +380,37 @@ fn sync(json: &str) -> Result<String, String> {
                 break;
             }
         }
+        // La cadena leída contra el último checkpoint del equipo.
+        let confirmed = match stark_mobile::checkpoint(&mut client, profile).await {
+            Ok(Some((height, hash))) => wallet.confirm_checkpoint(height, &hash).map(|_| ()).map_err(err),
+            Ok(None) => Ok(()),
+            Err(reason) => Err(format!("checkpoint: {reason}")),
+        };
         client.close().await;
-        Ok(())
+        confirmed
     });
     // Lo leído hasta un error también vale.
     save(&path, &seed, &wallet)?;
     outcome?;
+    Ok(status(&wallet).to_string())
+}
+
+/// Un checkpoint traído por HTTPS (`/checkpoint`): se verifica su firma acá y
+/// se confirma contra lo leído. Si no coincide, la billetera vuelve a empezar.
+fn confirm_checkpoint(json: &str) -> Result<String, String> {
+    let request = Request::parse(json)?;
+    let profile = request.profile()?;
+    let checkpoint: zoka::checkpoint_authority::SignedCheckpoint =
+        serde_json::from_value(request.checkpoint.clone().ok_or("falta checkpoint")?)
+            .map_err(|e| format!("checkpoint invalido: {e}"))?;
+    let (height, hash) = stark_mobile::verify_checkpoint(&checkpoint, profile)?;
+    let _lock = state_lock();
+    let (_, seed) = request.account()?;
+    let path = request.state_path()?;
+    let mut wallet = load(&path, &seed, profile, request.birth.unwrap_or(1))?;
+    let confirmed = wallet.confirm_checkpoint(height, &hash).map_err(err);
+    save(&path, &seed, &wallet)?;
+    confirmed?;
     Ok(status(&wallet).to_string())
 }
 
@@ -545,6 +583,7 @@ jni_json!(Java_com_zoka_zkapriv_network_nativebridge_ZokaStark_status0, "el esta
 jni_json!(Java_com_zoka_zkapriv_network_nativebridge_ZokaStark_addPages0, "las paginas entraron en panico", add_pages);
 jni_json!(Java_com_zoka_zkapriv_network_nativebridge_ZokaStark_sync0, "la sincronizacion entro en panico", sync);
 jni_json!(Java_com_zoka_zkapriv_network_nativebridge_ZokaStark_quote0, "la comision entro en panico", quote);
+jni_json!(Java_com_zoka_zkapriv_network_nativebridge_ZokaStark_confirmCheckpoint0, "el checkpoint entro en panico", confirm_checkpoint);
 jni_json!(Java_com_zoka_zkapriv_network_nativebridge_ZokaStark_send0, "el envio entro en panico", send);
 jni_json!(Java_com_zoka_zkapriv_network_nativebridge_ZokaStark_resolve0, "la direccion corta entro en panico", resolve);
 jni_json!(Java_com_zoka_zkapriv_network_nativebridge_ZokaStark_publish0, "publicar la direccion entro en panico", publish);
@@ -594,6 +633,11 @@ mod tests {
         assert!(load(&path, &[2; 32], Profile::TESTNET, 1).is_err(), "another seed opens nothing");
         let fresh = load(&dir.join("missing.bin"), &[1; 32], Profile::TESTNET, 9).unwrap();
         assert_eq!(fresh.height(), 0);
+        // A state of an older format is a stale cache: the wallet reads again.
+        fs::write(dir.join("old.bin"), b"ZKLW2 older bytes of another layout").unwrap();
+        assert_eq!(load(&dir.join("old.bin"), &[1; 32], Profile::TESTNET, 1).unwrap().height(), 0);
+        fs::write(dir.join("junk.bin"), b"not a wallet state at all").unwrap();
+        assert!(load(&dir.join("junk.bin"), &[1; 32], Profile::TESTNET, 1).is_err());
         let _ = fs::remove_dir_all(dir);
     }
 }
