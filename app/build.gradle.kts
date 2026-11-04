@@ -23,13 +23,14 @@ android {
         applicationId = "com.zoka.zkapriv"
         minSdk = 26
         targetSdk = 36
-        versionCode = 17
-        versionName = "2.1.4"
+        versionCode = 18
+        versionName = "3.0.0"
+        manifestPlaceholders["appLabel"] = "ZKAPriv"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
-        // Soporte para todas las arquitecturas (dispositivos físicos y emuladores)
+        // Los dos ABI ARM del motor nativo, incluido el teléfono de 32 bits.
         ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
     }
 
@@ -40,6 +41,7 @@ android {
     sourceSets {
         getByName("main") {
             jniLibs.srcDirs("../native/jniLibs")
+            assets.setSrcDirs(emptyList<String>()) // Los únicos assets eran parámetros Groth16 de v1.
         }
     }
 
@@ -62,6 +64,7 @@ android {
         debug {
             isMinifyEnabled = false
             applicationIdSuffix = ".benchmark"
+            manifestPlaceholders["appLabel"] = "ZKAPriv Testnet"
         }
         create("staging") {
             initWith(getByName("release"))
@@ -71,8 +74,12 @@ android {
         }
     }
 
-    // Paquete universal compatible con todos los dispositivos y emuladores
+    // Paquete universal para los dos ABI ARM compilados arriba.
     packaging {
+        jniLibs {
+            // cargo-ndk puede dejar .so intermedios; solo se carga el motor.
+            excludes += "**/libiroh*.so"
+        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "META-INF/DEPENDENCIES"

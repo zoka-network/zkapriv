@@ -41,6 +41,43 @@ fn java_string(env: &mut JNIEnv, value: String) -> jstring {
         .into_raw()
 }
 
+/// Hickory (el DNS que usa la red) pide el `Context` de Android por
+/// `ndk_context`. Sin esta inicialización, la primera lectura de la cadena
+/// hace abort y Android cierra la app (`android context was not initialized`).
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn JNI_OnLoad(vm: jni::JavaVM, _reserved: *mut std::ffi::c_void) -> jint {
+    if init_android_context(&vm).is_err() {
+        return jni::sys::JNI_ERR;
+    }
+    jni::sys::JNI_VERSION_1_6
+}
+
+#[cfg(target_os = "android")]
+fn init_android_context(vm: &jni::JavaVM) -> Result<(), jni::errors::Error> {
+    let mut env = vm.get_env()?;
+    let activity_thread = env.find_class("android/app/ActivityThread")?;
+    let app = env
+        .call_static_method(
+            activity_thread,
+            "currentApplication",
+            "()Landroid/app/Application;",
+            &[],
+        )?
+        .l()?;
+    if app.is_null() {
+        return Err(jni::errors::Error::NullPtr("Application"));
+    }
+    // La referencia global tiene que vivir todo el proceso: ndk_context guarda el puntero crudo.
+    let global = env.new_global_ref(app)?;
+    let context = global.as_obj().as_raw() as *mut std::ffi::c_void;
+    std::mem::forget(global);
+    unsafe {
+        ndk_context::initialize_android_context(vm.get_java_vm_pointer().cast(), context);
+    }
+    Ok(())
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaNativeWallet_buildPrivateTransaction(
     mut env: JNIEnv,

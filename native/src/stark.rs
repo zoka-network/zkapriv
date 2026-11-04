@@ -18,7 +18,7 @@ use std::{
     fs,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
+    sync::{atomic::{AtomicU8, Ordering}, Mutex, OnceLock},
 };
 
 use bip39::{Language, Mnemonic};
@@ -59,6 +59,13 @@ const PAGES_PER_CALL: usize = 20;
 const STATE_MAGIC: &[u8; 6] = b"ZKLW3\0";
 /// Pila del hilo que prueba: la de los hilos de Android no alcanza para todo.
 const PROVER_STACK: usize = 64 * 1024 * 1024;
+
+// Solo una fase pública; nunca datos de la prueba ni de la billetera.
+static SEND_PHASE: AtomicU8 = AtomicU8::new(0);
+struct Sending;
+impl Drop for Sending {
+    fn drop(&mut self) { SEND_PHASE.store(0, Ordering::Relaxed); }
+}
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -321,6 +328,13 @@ fn status(wallet: &LightWallet) -> Value {
     })
 }
 
+fn status_with_peers(wallet: &LightWallet, request: &Request) -> Result<Value, String> {
+    let mut reply = status(wallet);
+    let path = peers_path(request)?;
+    reply["peers"] = json!(load_peers(path.as_deref(), request.profile()?).len());
+    Ok(reply)
+}
+
 // ── Operaciones ──────────────────────────────────────────────────────────────
 
 fn new_phrase() -> Result<String, String> {
@@ -370,7 +384,7 @@ fn wallet_status(json: &str) -> Result<String, String> {
     let _lock = state_lock();
     let (_, seed) = request.account()?;
     let wallet = load(&request.state_path()?, &seed, request.profile()?, request.birth.unwrap_or(1))?;
-    Ok(status(&wallet).to_string())
+    Ok(status_with_peers(&wallet, &request)?.to_string())
 }
 
 /// Páginas que la app trajo por HTTPS, en orden desde `next`.
@@ -391,7 +405,7 @@ fn add_pages(json: &str) -> Result<String, String> {
         wallet.add_page(&account, &page).map_err(err)?;
     }
     save(&path, &seed, &wallet)?;
-    Ok(status(&wallet).to_string())
+    Ok(status_with_peers(&wallet, &request)?.to_string())
 }
 
 /// Páginas pedidas por P2P (directo o por Tor) a un par aprendido o a una
@@ -453,7 +467,7 @@ fn confirm_checkpoint(json: &str) -> Result<String, String> {
     let confirmed = wallet.confirm_checkpoint(height, &hash).map_err(err);
     save(&path, &seed, &wallet)?;
     confirmed?;
-    Ok(status(&wallet).to_string())
+    Ok(status_with_peers(&wallet, &request)?.to_string())
 }
 
 fn quote(json: &str) -> Result<String, String> {
@@ -516,6 +530,8 @@ fn send(json: &str) -> Result<String, String> {
     }
     let to_text = request.to.clone().ok_or("falta el destinatario")?;
     let _lock = state_lock();
+    let _sending = Sending;
+    SEND_PHASE.store(1, Ordering::Relaxed);
     let (account, seed) = request.account()?;
     let path = request.state_path()?;
     let mut wallet = load(&path, &seed, profile, 1)?;
@@ -535,6 +551,7 @@ fn send(json: &str) -> Result<String, String> {
     let fee = plan.fee;
     let expiry = plan.expiry;
     configure_mobile_prover_runtime();
+    SEND_PHASE.store(2, Ordering::Relaxed);
     let started = std::time::Instant::now();
     let tx = std::thread::Builder::new()
         .name("zoka-stark-prover".into())
@@ -547,6 +564,7 @@ fn send(json: &str) -> Result<String, String> {
     let proving_ms = started.elapsed().as_millis() as u64;
     wallet.reserve(&tx).map_err(err)?;
     save(&path, &seed, &wallet)?;
+    SEND_PHASE.store(3, Ordering::Relaxed);
     let sent = rt.block_on(async {
         let mut client = stark_mobile::connect_with(&mut peers, &seeds, route)
             .await
@@ -625,6 +643,14 @@ fn publish(json: &str) -> Result<String, String> {
 }
 
 // ── JNI: clase com.zoka.zkapriv.network.nativebridge.ZokaStark ──────────────
+
+#[no_mangle]
+pub extern "system" fn Java_com_zoka_zkapriv_network_nativebridge_ZokaStark_sendPhase0(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jni::sys::jint {
+    SEND_PHASE.load(Ordering::Relaxed) as jni::sys::jint
+}
 
 macro_rules! jni_json {
     ($name:ident, $what:literal, $f:path) => {

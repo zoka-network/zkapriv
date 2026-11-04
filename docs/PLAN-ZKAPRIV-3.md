@@ -140,13 +140,16 @@ Zenith.
    - saldo total, gastable e inmadura;
    - estado de sincronización (altura y "scan pages");
    - pastilla de red, y de Tor cuando está prendido;
-   - últimos movimientos.
+   - privacidad Quantic y detalles de red desplegables;
+   - navegación inferior Home / Send / Receive / Activity; los movimientos
+     quedan en Activity (pedido del usuario del 3/11).
 4. **Historial y detalle de movimiento:** con el enlace a zokascan.cc.
 5. **Enviar:**
    - dirección corta o completa, pegada o escaneada;
    - monto, comisión y memo de 512 bytes;
    - confirmación;
-   - progreso de la prueba ("Proving…") y del envío;
+   - matriz de cuadrados que se iluminan durante la prueba y el envío;
+     check rosa al aceptar, error rojo al fallar (pedido del 3/11);
    - resultado con el txid.
 6. **Recibir:** dirección corta en QR normal, la completa en QR multiparte,
    copiar y compartir, y "publicar dirección corta".
@@ -161,9 +164,9 @@ Zenith.
    - zona de peligro.
 9. **Estados vacíos, errores y diálogos.** La pantalla de precio se mantiene
    solo si tiene datos reales; si no, sale.
-10. **Textos:** se mantiene el esquema de idiomas que ya tenga la app, con los
-    términos de ZSilent: short address, view key, Tor mode, ZKA, recovery
-    phrase.
+10. **Textos:** toda la interfaz en inglés, por decisión expresa del usuario
+    del 3/11. Se mantienen los términos de ZSilent: short address, view key,
+    Tor mode, ZKA, recovery phrase. Documentación y conversación en castellano.
 
 ### E4. Pruebas
 - Unitarias en Rust: ledger liviano contra ledger completo, formato de página,

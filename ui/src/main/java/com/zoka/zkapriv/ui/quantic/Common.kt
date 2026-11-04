@@ -61,7 +61,7 @@ fun ZkScreen(
             .fillMaxSize()
             .background(Zk.colors.background)
             .statusBarsPadding()
-            .navigationBarsPadding()
+            .let { if (LocalWalletTabs.current) it else it.navigationBarsPadding() }
             .imePadding(),
     ) {
         if (title != null || onBack != null) {

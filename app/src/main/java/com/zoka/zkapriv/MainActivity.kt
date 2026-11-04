@@ -1,6 +1,8 @@
 package com.zoka.zkapriv
 
 import android.os.Bundle
+import android.content.Intent
+import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -11,7 +13,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -19,6 +20,7 @@ import com.zoka.zkapriv.core.preferences.ThemeMode
 import com.zoka.zkapriv.ui.gallery.ZkGallery
 import com.zoka.zkapriv.ui.quantic.QuanticApp
 import com.zoka.zkapriv.ui.quantic.WalletViewModel
+import com.zoka.zkapriv.ui.quantic.WalletDesignPreview
 import com.zoka.zkapriv.ui.theme.ZkDark
 import com.zoka.zkapriv.ui.theme.ZkLight
 import com.zoka.zkapriv.ui.theme.ZkTheme
@@ -31,12 +33,36 @@ import javax.inject.Inject
  */
 @AndroidEntryPoint
 class MainActivity : FragmentActivity() {
+    private fun configureSystemBars(dark: Boolean) {
+        val background = (if (dark) ZkDark else ZkLight).background.toArgb()
+        window.decorView.setBackgroundColor(background)
+        window.navigationBarColor = background
+        if (android.os.Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !dark
+            isAppearanceLightNavigationBars = !dark
+        }
+    }
+    private val pendingPayment = MutableStateFlow<String?>(null)
+
+    private fun readPaymentIntent(value: Intent?) {
+        if (value?.action == Intent.ACTION_VIEW && value.data?.scheme == "zoka") {
+            pendingPayment.value = value.dataString?.takeIf { it.length <= 10_000 }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        readPaymentIntent(intent)
+    }
 
     @Inject
     lateinit var sessionManager: SessionManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        readPaymentIntent(intent)
 
         // Ni capturas ni grabaciones de pantalla, ni vista previa en recientes:
         // acá se ven la frase de recuperación y la clave de vista.
@@ -48,6 +74,13 @@ class MainActivity : FragmentActivity() {
 
         // Galería de componentes, solo en depuración y sin datos de la
         // billetera: por eso es la única pantalla que admite capturas.
+        if (BuildConfig.DEBUG && intent.getStringExtra("screen") == "wallet-preview") {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            val dark = intent.getStringExtra("theme") != "light"
+            configureSystemBars(dark)
+            setContent { WalletDesignPreview(dark, intent.getStringExtra("scenario") ?: "home") }
+            return
+        }
         if (BuildConfig.DEBUG && intent.getStringExtra("screen") == "gallery") {
             window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
             setContent {
@@ -62,21 +95,18 @@ class MainActivity : FragmentActivity() {
             val themeMode by vm.themeMode.collectAsState()
             val animations by vm.animations.collectAsState()
             val locked by sessionManager.isLocked.collectAsState()
+            val payment by pendingPayment.collectAsState()
             val dark = when (themeMode) {
                 ThemeMode.LIGHT -> false
                 ThemeMode.DARK -> true
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
             }
-            val view = LocalView.current
             SideEffect {
-                window.decorView.setBackgroundColor((if (dark) ZkDark else ZkLight).background.toArgb())
-                WindowCompat.getInsetsController(window, view).apply {
-                    isAppearanceLightStatusBars = !dark
-                    isAppearanceLightNavigationBars = !dark
-                }
+                configureSystemBars(dark)
             }
             ZkTheme(darkTheme = dark, animations = animations) {
-                QuanticApp(vm, locked = locked, onUnlocked = { sessionManager.unlock() })
+                QuanticApp(vm, locked = locked, onUnlocked = { sessionManager.unlock() },
+                    payment = payment, onPaymentHandled = { pendingPayment.value = null })
             }
         }
     }

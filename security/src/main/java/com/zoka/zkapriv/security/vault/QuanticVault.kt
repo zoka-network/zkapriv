@@ -55,6 +55,7 @@ class QuanticVault @Inject constructor(
             .putString(KEY_PHRASE, phrase.trim().split(Regex("\\s+")).joinToString(" "))
             .putInt(KEY_BIRTH, birth)
             .putBoolean(KEY_READY, false)
+            .putBoolean(KEY_PUBLISHED, false)
             .apply()
     }
 
@@ -119,6 +120,14 @@ class QuanticVault @Inject constructor(
         get() = prefs.getBoolean(KEY_TOR, false)
         set(value) = prefs.edit().putBoolean(KEY_TOR, value).apply()
 
+    /**
+     * La dirección corta ya fue aceptada por una semilla. Sin esto ZSilent
+     * responde 404: ni el nodo ni sus pares conocen la corta.
+     */
+    var addressPublished: Boolean
+        get() = prefs.getBoolean(KEY_PUBLISHED, false)
+        set(value) = prefs.edit().putBoolean(KEY_PUBLISHED, value).apply()
+
     /** Borra la billetera v3 de este teléfono: frase, PIN y estado. */
     fun wipe() {
         prefs.edit().clear().commit()
@@ -158,5 +167,6 @@ class QuanticVault @Inject constructor(
         private const val KEY_PIN_LOCKED_UNTIL = "pin_locked_until"
         private const val KEY_BIOMETRIC = "biometric"
         private const val KEY_TOR = "tor_mode"
+        private const val KEY_PUBLISHED = "address_published"
     }
 }

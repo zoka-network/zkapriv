@@ -44,6 +44,9 @@ rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 zeroize = "1"
+# Hickory lee los DNS del sistema por acá. Hay que inicializarlo en JNI_OnLoad;
+# si no, la primera lectura de la cadena aborta el proceso.
+ndk-context = "0.1.1"
 
 [features]
 # Direcciones zkq1 y salidas v2 (X-Wing). build-android.ps1 la activa para los

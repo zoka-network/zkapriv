@@ -8,6 +8,33 @@
 > `ui/src/main/java/com/zoka/zkapriv/ui/quantic/`; lo que sigue de este archivo
 > describe la 2.x (zka1, REST) y queda como historia.
 
+## 3/11/2026: Home, navegación, envío y saldo en vivo
+
+Pedido del usuario: Home centrado en saldo y privacidad Quantic, con pestañas
+inferiores **Home / Send / Receive / Activity**; cuadrícula de prueba con
+luces aleatorias y resultado rosa/rojo; actualización del saldo sin reiniciar.
+**Toda la interfaz va en inglés**, por corrección expresa del usuario.
+
+- Home compacto, saldo disponible/inmaduro/reservado, hora de actualización,
+  checkpoint verificado y detalles de red desplegables.
+- Matriz 16×16 que respeta movimiento reducido; fases reales del motor sin
+  porcentaje inventado. Check rosa significa aceptación de la red, todavía
+  pendiente de bloque; rojo indica error y advierte si la aceptación es incierta.
+- Envío en el ViewModel: conserva progreso y resultado al navegar. Consulta
+  de saldo inmediata al finalizar, con reintentos y sin operaciones duplicadas.
+- API de páginas frescas, checkpoint HTTPS, pares conocidos, publicación de
+  dirección comprobada y modo Tor sin alternativa directa ante un fallo.
+- Montos independientes del idioma del teléfono: coma decimal segura, seis
+  decimales máximos, separadores ambiguos rechazados. Enlaces `zoka:` completan
+  Send después de desbloquear; nunca disparan un pago.
+- 53 pruebas JVM de red/UI aprobadas. La vista de diseño en el teléfono usa
+  datos ficticios y no abre el almacén. Motor nuevo y prueba instrumentada
+  HTTPS/P2P/Tor en curso; después siguen los envíos del usuario y el APK firmado.
+
+`com.zoka.zkapriv` instalado en el teléfono es v1 (2.1.3). La variante v2 de
+pruebas `com.zoka.zkapriv.benchmark` existe desde el 30/10: se actualiza con
+`adb install -r` para conservar sus datos. No desinstalar ni borrar datos.
+
 ## Objetivo
 
 Convertir `zkapriv` en la wallet Android de Zoka, manteniendo solo el motor y las pantallas que aplican a esta blockchain:

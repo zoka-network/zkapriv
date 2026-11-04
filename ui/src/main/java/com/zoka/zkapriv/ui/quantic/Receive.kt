@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -41,13 +42,14 @@ import kotlinx.coroutines.launch
  * La corta sirve cuando la red conoce la completa: se publica una vez.
  */
 @Composable
-fun ReceiveScreen(vm: WalletViewModel, onBack: () -> Unit) {
+fun ReceiveScreen(vm: WalletViewModel) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val short = remember { vm.shortAddress() }
     val full = remember { vm.fullAddress() }
     var which by remember { mutableStateOf("Short") }
-    var published by remember { mutableStateOf<Boolean?>(null) }
+    val state by vm.state.collectAsState()
+    val published = state.addressPublished
     var publishing by remember { mutableStateOf(false) }
     var publishError by remember { mutableStateOf<String?>(null) }
 
@@ -56,7 +58,7 @@ fun ReceiveScreen(vm: WalletViewModel, onBack: () -> Unit) {
         context.startActivity(Intent.createChooser(send, "Share address"))
     }
 
-    ZkScreen(title = "Receive ZKA", onBack = onBack) {
+    ZkScreen(title = "Receive ZKA") {
         Segmented(listOf("Short", "Full"), which, { which = it }, Modifier.fillMaxWidth())
         if (which == "Short") {
             Panel {
@@ -72,8 +74,7 @@ fun ReceiveScreen(vm: WalletViewModel, onBack: () -> Unit) {
                 right = {
                     when (published) {
                         true -> Pill("Published", tone = ZkTone.On)
-                        false -> Pill("Not taken", tone = ZkTone.Warn)
-                        null -> Unit
+                        false -> Pill("Not published", tone = ZkTone.Warn)
                     }
                 },
             ) {
@@ -89,15 +90,15 @@ fun ReceiveScreen(vm: WalletViewModel, onBack: () -> Unit) {
                         publishError = null
                         scope.launch {
                             vm.publishAddress()
-                                .onSuccess { published = it }
-                                .onFailure { publishError = it.message }
+                                .onSuccess { if (!it) publishError = "The network has not accepted your address yet. Try again." }
+                                .onFailure { publishError = "Could not publish your address. Try again." }
                             publishing = false
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
                     variant = ZButtonVariant.Accent,
-                    enabled = !publishing,
-                ) { ZButtonText(if (publishing) "Publishing…" else "Publish address") }
+                    enabled = !publishing && !published,
+                ) { ZButtonText(if (publishing) "Publishing…" else if (published) "Address published" else "Publish address") }
                 publishError?.let { Notice(it, tone = ZkTone.Err) }
             }
         } else {
@@ -134,7 +135,7 @@ private fun AnimatedMultiPartQr(text: String) {
         ZkQrCode(parts[index])
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (!animate && parts.size > 1) {
-                ZButton({ index = (index + parts.size - 1) % parts.size }, size = ZButtonSize.Small) { ZButtonText("Prev") }
+                ZButton({ index = (index + parts.size - 1) % parts.size }, size = ZButtonSize.Small) { ZButtonText("Previous") }
             }
             Text("Part ${index + 1} of ${parts.size}", style = Zk.text.mono, color = Zk.colors.textMuted)
             if (!animate && parts.size > 1) {

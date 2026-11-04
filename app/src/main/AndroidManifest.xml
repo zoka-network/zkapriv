@@ -25,7 +25,7 @@
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
+        android:label="${appLabel}"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.ZkaPriv"
@@ -34,9 +34,14 @@
         android:largeHeap="true"
         tools:targetApi="34">
 
+        <!-- Servicio de la red anterior: no forma parte del flujo STARK v2. -->
+        <service android:name="com.zoka.zkapriv.network.nativebridge.LocalProverService"
+            tools:node="remove" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.ZkaPriv"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize">

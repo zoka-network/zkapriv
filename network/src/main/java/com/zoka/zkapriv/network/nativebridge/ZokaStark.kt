@@ -3,6 +3,18 @@ package com.zoka.zkapriv.network.nativebridge
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** Evita un Formatter y una cadena temporal por cada byte de /scan2. */
+internal fun encodeScanPage(page: ByteArray): String {
+    val digits = "0123456789abcdef"
+    val encoded = CharArray(page.size * 2)
+    for (index in page.indices) {
+        val value = page[index].toInt() and 0xff
+        encoded[index * 2] = digits[value ushr 4]
+        encoded[index * 2 + 1] = digits[value and 15]
+    }
+    return String(encoded)
+}
+
 /**
  * Motor de Zoka Quantic Testnet v2 (STARK) dentro de `zoka_mobile`
  * (`native/src/stark.rs`, feature `quantic-pq`).
@@ -68,7 +80,7 @@ object ZokaStark {
     /** Páginas `/scan2` traídas por HTTPS, en orden desde `next`. */
     fun addPages(phrase: String, stateDir: String, pages: List<ByteArray>, birth: Int? = null): JSONObject {
         val hex = JSONArray()
-        pages.forEach { page -> hex.put(page.joinToString("") { "%02x".format(it) }) }
+        pages.forEach { page -> hex.put(encodeScanPage(page)) }
         return call(
             base(phrase, stateDir).put("pages_hex", hex).apply { birth?.let { put("birth", it) } },
             ::addPages0,
@@ -126,6 +138,10 @@ object ZokaStark {
     fun publish(phrase: String, torProxy: String?, stateDir: String? = null): Boolean =
         call(base(phrase, stateDir, torProxy), ::publish0).getBoolean("published")
 
+    /** 0: espera, 1: conexión, 2: prueba local, 3: envío a la red. Sin secretos. */
+    fun sendPhase(): Int = sendPhase0()
+
+    @JvmStatic private external fun sendPhase0(): Int
     @JvmStatic private external fun newPhrase0(): String
     @JvmStatic private external fun walletInfo0(request: String): String
     @JvmStatic private external fun viewKey0(request: String): String

@@ -9,18 +9,29 @@ import com.zoka.zkapriv.network.quantic.QuanticWallet
 import com.zoka.zkapriv.security.vault.QuanticVault
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import javax.inject.Inject
+
+data class SendState(
+    val running: Boolean = false,
+    val phase: Int = 0,
+    val startedAt: Long = 0,
+    val amountAtoms: Long = 0,
+    val result: JSONObject? = null,
+    val error: String? = null,
+)
 
 /**
  * Estado y acciones de la billetera para todas las pantallas de ZKAPriv 3.
@@ -96,27 +107,46 @@ class WalletViewModel @Inject constructor(
 
     // ── Cadena ───────────────────────────────────────────────────────────────
 
-    private var syncLoop: Job? = null
+    private val syncLoop = WalletSyncLoop(viewModelScope, { wallet.sync() }) {
+        when {
+            state.value.error != null -> 15_000L
+            !state.value.inSync -> 1_000L
+            state.value.pendingTxid != null -> 4_000L
+            else -> 10_000L
+        }
+    }
+    private var publishJob: Job? = null
+    private var loadJob: Job? = null
 
-    /** Lee la cadena mientras la app está a la vista: cada minuto al día, seguido si falta. */
+    /** Actualiza mientras está abierta y al volver, sin acumular pedidos. */
     fun startSync() {
-        if (syncLoop?.isActive == true || !vault.hasWallet()) return
-        syncLoop = viewModelScope.launch {
-            wallet.load()
-            while (isActive) {
-                wallet.sync()
-                val current = state.value
-                delay(if (current.inSync && current.error == null) 60_000 else 15_000)
-            }
+        if (!vault.hasWallet()) return
+        if (!state.value.loaded && loadJob?.isActive != true) {
+            loadJob = viewModelScope.launch { wallet.load() }
+        }
+        syncLoop.start()
+        syncLoop.request()
+        if (publishJob?.isActive != true) publishJob = viewModelScope.launch { publishUntilKnown() }
+    }
+
+    /**
+     * Publica la dirección corta en una semilla. ZSilent paga a una corta solo
+     * si su nodo la tiene en el directorio; si no, la API responde 404.
+     */
+    private suspend fun publishUntilKnown() {
+        while (currentCoroutineContext().isActive && !vault.addressPublished) {
+            val accepted = publishAddress().getOrNull() == true
+            if (!accepted) delay(15_000)
         }
     }
 
     fun stopSync() {
-        syncLoop?.cancel()
-        syncLoop = null
+        syncLoop.stop()
+        publishJob?.cancel()
+        publishJob = null
     }
 
-    fun syncNow() = viewModelScope.launch { wallet.sync() }
+    fun syncNow() { syncLoop.request() }
 
     // ── Direcciones ──────────────────────────────────────────────────────────
 
@@ -125,7 +155,10 @@ class WalletViewModel @Inject constructor(
     fun viewKey(): String = wallet.viewKey()
     fun phrase(): String? = vault.phrase()
 
-    suspend fun publishAddress(): Result<Boolean> = runCatching { wallet.publishAddress() }
+    suspend fun publishAddress(): Result<Boolean> = try {
+        Result.success(wallet.publishAddress())
+    } catch (cancelled: CancellationException) { throw cancelled
+    } catch (e: Exception) { Result.failure(e) }
 
     // ── Enviar ───────────────────────────────────────────────────────────────
 
@@ -136,8 +169,39 @@ class WalletViewModel @Inject constructor(
      * bloquea el teléfono mientras prueba), el pago sigue y su resultado no
      * se pierde.
      */
-    fun startSend(to: String, amountAtoms: Long, memo: String): Deferred<JSONObject> =
-        viewModelScope.async { wallet.send(to, amountAtoms, memo) }
+    private val _sendState = MutableStateFlow(SendState())
+    val sendState: StateFlow<SendState> = _sendState.asStateFlow()
+
+    fun startSend(to: String, amountAtoms: Long, memo: String) {
+        if (_sendState.value.running) return
+        _sendState.value = SendState(running = true, startedAt = System.currentTimeMillis(), amountAtoms = amountAtoms)
+        viewModelScope.launch {
+            val phaseJob = launch {
+                while (isActive) {
+                    val phase = wallet.sendPhase()
+                    _sendState.value = _sendState.value.copy(phase = phase)
+                    delay(250)
+                }
+            }
+            try {
+                val result = wallet.send(to, amountAtoms, memo)
+                _sendState.value = _sendState.value.copy(running = false, result = result)
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (e: Exception) {
+                _sendState.value = _sendState.value.copy(running = false,
+                    error = when {
+                        state.value.pendingTxid != null -> "The network response was interrupted. Your payment may have been accepted; funds stay reserved until confirmation or expiry."
+                        e.message.orEmpty().contains("direccion", ignoreCase = true) -> "Could not resolve the recipient. Check the address or ask for their full address."
+                        else -> "Could not complete the payment. Check your connection and available balance, then try again."
+                    })
+            } finally {
+                phaseJob.cancel()
+                syncNow()
+            }
+        }
+    }
+
+    fun clearSendResult() { if (!_sendState.value.running) _sendState.value = SendState() }
 
     // ── Ajustes ──────────────────────────────────────────────────────────────
 
@@ -149,6 +213,7 @@ class WalletViewModel @Inject constructor(
 
     /** Borra la billetera v3 del teléfono. La frase es lo único que la recupera. */
     suspend fun wipe() = withContext(Dispatchers.IO) {
+        check(!_sendState.value.running) { "Wait until your payment finishes before removing the wallet" }
         stopSync()
         vault.wipe()
         wallet.forget()
@@ -157,4 +222,5 @@ class WalletViewModel @Inject constructor(
     override fun onCleared() {
         stopSync()
     }
+
 }

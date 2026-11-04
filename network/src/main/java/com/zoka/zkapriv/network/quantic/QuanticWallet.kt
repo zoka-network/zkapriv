@@ -1,11 +1,15 @@
 package com.zoka.zkapriv.network.quantic
 
 import android.content.Context
+import android.util.Log
 import com.zoka.zkapriv.network.nativebridge.ZokaNativeNetwork
 import com.zoka.zkapriv.network.nativebridge.ZokaStark
 import com.zoka.zkapriv.security.vault.QuanticVault
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,6 +53,10 @@ data class QuanticState(
     /** Cómo se leyó la última vez: `https`, `p2p` o `tor`. */
     val source: String? = null,
     val lastSyncMillis: Long = 0,
+    val verifiedHeight: Int = 0,
+    val peers: Int = 0,
+    val torEnabled: Boolean = false,
+    val addressPublished: Boolean = false,
     val error: String? = null,
 ) {
     val balanceAtoms: Long get() = spendableAtoms + immatureAtoms + reservedAtoms
@@ -59,8 +67,8 @@ data class QuanticState(
 /**
  * La billetera de Zoka Quantic Testnet v2 del teléfono, sobre [ZokaStark].
  *
- * Lee la cadena por páginas: sin Tor, primero por HTTPS (zokascan.cc, que
- * las cachea; después la API del explorador) y, si no hay respuesta, por P2P
+ * Lee la cadena por páginas: sin Tor, primero por HTTPS (API del explorador,
+ * luego la web) y, si no hay respuesta, por P2P
  * a una semilla; con el Modo Tor, solo por P2P a las semillas .onion, a
  * través del Arti del teléfono. Si Tor no arranca, no se conecta de otra
  * forma. La prueba de cada pago se hace en el teléfono.
@@ -75,10 +83,12 @@ class QuanticWallet @Inject constructor(
 
     /** Sincronizar y enviar no se pisan (Rust también lo cuida). */
     private val busy = Mutex()
+    private val publishing = Mutex()
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(25, TimeUnit.SECONDS)
+        .callTimeout(35, TimeUnit.SECONDS)
         .build()
 
     @Volatile private var torProxy: String? = null
@@ -115,63 +125,105 @@ class QuanticWallet @Inject constructor(
 
     /** El estado guardado, sin red. */
     suspend fun load() = withContext(Dispatchers.IO) {
-        runCatching { ZokaStark.status(vault.phrase() ?: return@withContext, vault.stateDir, vault.birth()) }
-            .onSuccess { reply -> _state.update { it.from(reply).copy(loaded = true) } }
-            .onFailure { e -> _state.update { it.copy(error = e.message) } }
+        busy.withLock { reloadStatus() }
+    }
+
+    private fun reloadStatus() {
+        runCatching { ZokaStark.status(phrase(), vault.stateDir, vault.birth()) }
+            .onSuccess { reply -> _state.update { it.from(reply).copy(loaded = true,
+                torEnabled = vault.torMode, addressPublished = vault.addressPublished) } }
+            .onFailure { _state.update { it.copy(error = "Could not read the wallet state") } }
     }
 
     /** Lee la cadena hasta la punta. */
     suspend fun sync() = withContext(Dispatchers.IO) {
         if (!vault.hasWallet() && vault.phrase() == null) return@withContext
-        busy.withLock {
+        // Un toque repetido o un envío no acumulan lecturas en espera.
+        if (!busy.tryLock()) return@withContext
+        try {
             _state.update { it.copy(syncing = true, error = null) }
             val result = runCatching {
                 if (vault.torMode) syncP2p(tor = true) else syncHttpsThenP2p()
             }
+            result.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+            currentCoroutineContext().ensureActive()
             _state.update { current ->
                 result.fold(
                     onSuccess = { (reply, source) ->
+                        Log.i(TAG, "sync ok via $source")
                         current.from(reply).copy(
                             loaded = true,
                             syncing = false,
                             source = source,
                             lastSyncMillis = System.currentTimeMillis(),
+                            error = null,
                         )
                     },
-                    onFailure = { e -> current.copy(syncing = false, error = e.message ?: "Sync failed") },
+                    onFailure = { e ->
+                        Log.w(TAG, "No se pudo sincronizar (${e.javaClass.simpleName})")
+                        current.copy(syncing = false, error = "Could not refresh your balance. We will retry automatically.")
+                    },
                 )
             }
+        } finally {
+            _state.update { it.copy(syncing = false) }
+            busy.unlock()
         }
     }
 
-    private fun syncHttpsThenP2p(): Pair<JSONObject, String> {
+    private suspend fun syncHttpsThenP2p(): Pair<JSONObject, String> {
         val phrase = phrase()
         var reply = ZokaStark.status(phrase, vault.stateDir, vault.birth())
         return try {
             var rounds = 0
             while (!reply.getBoolean("in_sync") || rounds == 0) {
                 if (rounds++ >= MAX_ROUNDS) break
-                val page = fetchPage(reply.getInt("next")) ?: break
+                currentCoroutineContext().ensureActive()
+                if (vault.torMode) return syncP2p(tor = true)
+                val page = fetchPage(reply.getInt("next"))
                 reply = ZokaStark.addPages(phrase, vault.stateDir, listOf(page), vault.birth())
-                _state.update { it.from(reply) }
+                _state.update { it.from(reply).copy(loaded = true) }
+            }
+            currentCoroutineContext().ensureActive()
+            if (vault.torMode) return syncP2p(tor = true)
+            val request = Request.Builder().url("https://api.zokascan.cc/checkpoint")
+                .header("Cache-Control", "no-cache").get().build()
+            http.newCall(request).execute().use { response ->
+                check(response.isSuccessful) { "Checkpoint HTTP ${response.code}" }
+                val checkpoint = response.body?.string() ?: error("Checkpoint vacío")
+                reply = ZokaStark.confirmCheckpoint(phrase, vault.stateDir, checkpoint)
             }
             reply to "https"
         } catch (https: Exception) {
+            if (https is CancellationException) throw https
             // La web no contesta (o no tiene /scan2 todavía): a una semilla, directo.
-            syncP2p(tor = false)
+            try {
+                syncP2p(tor = vault.torMode)
+            } catch (p2p: Exception) {
+                if (p2p is CancellationException) throw p2p
+                reloadStatus() // Una verificación fallida puede haber reiniciado la caché nativa.
+                throw IllegalStateException("https: ${https.message}; p2p: ${p2p.message}")
+            }
         }
     }
 
-    /** Una página de [SCAN_BASES]; null si la cadena no tiene más. */
-    private fun fetchPage(from: Int): ByteArray? {
+    /** También las páginas vacías se verifican en Rust: actualizan la punta. */
+    private fun fetchPage(from: Int): ByteArray {
         var last: Exception? = null
         for (base in SCAN_BASES) {
             try {
-                val request = Request.Builder().url("$base?from=$from&count=100").get().build()
+                val request = Request.Builder().url("$base?from=$from&count=100")
+                    .header("Cache-Control", "no-cache").get().build()
                 http.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code} from $base")
+                    // zokascan.cc/scan2 hoy cae en la página del explorador (HTML 200).
+                    // Sin este filtro esa página se toma como cadena y no se prueba la API.
+                    val type = response.header("Content-Type").orEmpty().substringBefore(';').trim()
+                    if (!type.equals("application/octet-stream", ignoreCase = true)) {
+                        throw IllegalStateException("page from $base is $type")
+                    }
                     val bytes = response.body?.bytes() ?: throw IllegalStateException("Empty answer from $base")
-                    return if (bytes.size < EMPTY_PAGE_BYTES && emptyPage(bytes)) null else bytes
+                    return bytes
                 }
             } catch (e: Exception) {
                 last = e
@@ -180,26 +232,24 @@ class QuanticWallet @Inject constructor(
         throw last ?: IllegalStateException("No page source")
     }
 
-    /** Una página sin bloques: red, punta y origen, nada más (unos pocos bytes). */
-    private fun emptyPage(bytes: ByteArray): Boolean = bytes.isNotEmpty() && bytes.last() == 0.toByte()
-
-    private fun syncP2p(tor: Boolean): Pair<JSONObject, String> {
+    private suspend fun syncP2p(tor: Boolean): Pair<JSONObject, String> {
         val proxy = if (tor) ensureTor() else null
         val phrase = phrase()
         var reply = ZokaStark.sync(phrase, vault.stateDir, proxy, vault.birth())
         var rounds = 0
         while (!reply.getBoolean("in_sync") && rounds++ < MAX_ROUNDS) {
-            _state.update { it.from(reply) }
+            currentCoroutineContext().ensureActive()
+            _state.update { it.from(reply).copy(loaded = true) }
             reply = ZokaStark.sync(phrase, vault.stateDir, proxy, vault.birth())
         }
         return reply to if (tor) "tor" else "p2p"
     }
 
     /** El SOCKS de Arti; si Tor no arranca, falla (nunca sale sin Tor). */
-    private fun ensureTor(): String {
+    @Synchronized private fun ensureTor(): String {
         torProxy?.let { return it }
         val reply = JSONObject(ZokaNativeNetwork.startTor(context.cacheDir.absolutePath))
-        if (reply.has("error")) throw IllegalStateException("Tor did not start: ${reply.getString("error")}")
+        if (reply.has("error")) throw IllegalStateException("Tor could not start. Try again in a few seconds.")
         return reply.getString("proxy").also { torProxy = it }
     }
 
@@ -218,24 +268,34 @@ class QuanticWallet @Inject constructor(
      */
     suspend fun send(to: String, amountAtoms: Long, memo: String): JSONObject = withContext(Dispatchers.IO) {
         busy.withLock {
-            val reply = ZokaStark.send(phrase(), vault.stateDir, to, amountAtoms, memo, route())
-            runCatching { ZokaStark.status(phrase(), vault.stateDir, vault.birth()) }
-                .onSuccess { status -> _state.update { it.from(status) } }
-            reply
+            try {
+                ZokaStark.send(phrase(), vault.stateDir, to, amountAtoms, memo, route())
+            } finally {
+                // También ante un timeout: las notas pueden quedar reservadas.
+                reloadStatus()
+            }
         }
     }
 
+    fun sendPhase(): Int = ZokaStark.sendPhase()
+
     suspend fun resolve(short: String): String? = withContext(Dispatchers.IO) {
-        ZokaStark.resolve(short, route())
+        ZokaStark.resolve(short, route(), vault.stateDir)
     }
 
     suspend fun publishAddress(): Boolean = withContext(Dispatchers.IO) {
-        ZokaStark.publish(phrase(), route())
+        publishing.withLock {
+            val accepted = ZokaStark.publish(phrase(), route(), vault.stateDir)
+            if (accepted) vault.addressPublished = true
+            _state.update { it.copy(addressPublished = vault.addressPublished) }
+            accepted
+        }
     }
 
     /** Al cambiar el Modo Tor la próxima lectura usa la ruta nueva. */
     fun setTorMode(enabled: Boolean) {
         vault.torMode = enabled
+        _state.update { it.copy(torEnabled = enabled) }
     }
 
     fun torMode(): Boolean = vault.torMode
@@ -272,26 +332,27 @@ class QuanticWallet @Inject constructor(
             maxSendableAtoms = reply.optLong("max_sendable_atoms", maxSendableAtoms),
             pendingTxid = reply.optJSONObject("pending")?.optString("txid"),
             history = history,
+            verifiedHeight = reply.optInt("verified", verifiedHeight),
+            peers = reply.optInt("peers", peers),
         )
     }
 
     companion object {
-        /** Primero la copia en caché de Cloudflare, después la API del explorador. */
-        val SCAN_BASES = listOf("https://zokascan.cc/scan2", "https://api.zokascan.cc/scan2")
+        /** La punta debe estar fresca; la web es la alternativa de lectura. */
+        val SCAN_BASES = listOf("https://api.zokascan.cc/scan2", "https://zokascan.cc/scan2")
         private const val MAX_ROUNDS = 40
-        /** Una página vacía pesa unos pocos bytes; una con un bloque, kilobytes. */
-        private const val EMPTY_PAGE_BYTES = 64
+        private const val TAG = "QuanticWallet"
         const val ATOMS_PER_ZKA = 1_000_000L
 
         fun formatZka(atoms: Long): String {
             val whole = atoms / ATOMS_PER_ZKA
             val fraction = (atoms % ATOMS_PER_ZKA).toString().padStart(6, '0')
-            return "%,d.%s".format(whole, fraction)
+            return String.format(java.util.Locale.US, "%,d.%s", whole, fraction)
         }
 
         /** "12.5" → átomos; null si no es un monto válido con hasta 6 decimales. */
         fun parseZka(text: String): Long? {
-            val clean = text.trim().replace(",", "")
+            val clean = text.trim().replace(',', '.')
             if (!Regex("^\\d{1,9}(\\.\\d{0,6})?$").matches(clean)) return null
             val parts = clean.split(".")
             val whole = parts[0].toLong()

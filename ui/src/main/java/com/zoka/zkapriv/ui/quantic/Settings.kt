@@ -56,6 +56,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state by vm.state.collectAsState()
+    val sending by vm.sendState.collectAsState()
     val theme by vm.themeMode.collectAsState()
     val animations by vm.animations.collectAsState()
     var biometric by remember { mutableStateOf(vm.biometricEnabled()) }
@@ -151,28 +152,34 @@ fun SettingsScreen(
             SettingRow("ZokaScan explorer", null) { open("https://zokascan.cc") }
             ThinDivider()
             SettingRow("Source code", null) { open("https://github.com/zoka-network/zkapriv") }
+            ThinDivider()
+            SettingRow("Privacy", null) { open("https://github.com/zoka-network/zkapriv/blob/zkapriv-v2/PRIVACY_POLICY_EN.md") }
             HintText("Payments are private: amounts, senders and receivers are not public. The seeds you connect to see your IP unless Tor mode is on.")
         }
 
         Panel(title = "Danger zone") {
-            Text(
-                "Remove this wallet from the phone. Only the 24 words bring it back.",
-                style = MaterialTheme.typography.bodySmall,
-                color = Zk.colors.textMuted,
-            )
-            if (!confirmWipe) {
-                ZButton({ confirmWipe = true }, Modifier.fillMaxWidth(), ZButtonVariant.Danger) {
-                    ZButtonText("Remove wallet")
-                }
+            if (sending.running) {
+                Notice("Wait until your payment finishes before removing the wallet.", tone = ZkTone.Warn)
             } else {
-                Notice("Did you write down the 24 words? Without them the coins are lost.", tone = ZkTone.Err)
-                Row {
-                    ZButton({ confirmWipe = false }, Modifier.weight(1f), ZButtonVariant.Ghost) { ZButtonText("Cancel") }
-                    ZButton(
-                        { scope.launch { vm.wipe(); onWiped() } },
-                        Modifier.weight(1f),
-                        ZButtonVariant.Danger,
-                    ) { ZButtonText("Remove") }
+                Text(
+                    "Remove this wallet from the phone. Only the 24 words bring it back.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Zk.colors.textMuted,
+                )
+                if (!confirmWipe) {
+                    ZButton({ confirmWipe = true }, Modifier.fillMaxWidth(), ZButtonVariant.Danger) {
+                        ZButtonText("Danger zone")
+                    }
+                } else {
+                    Notice("Did you write down the 24 words? Without them the coins are lost.", tone = ZkTone.Err)
+                    Row {
+                        ZButton({ confirmWipe = false }, Modifier.weight(1f), ZButtonVariant.Ghost) { ZButtonText("Cancel") }
+                        ZButton(
+                            { scope.launch { vm.wipe(); onWiped() } },
+                            Modifier.weight(1f),
+                            ZButtonVariant.Danger,
+                        ) { ZButtonText("Remove") }
+                    }
                 }
             }
         }

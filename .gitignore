@@ -49,3 +49,5 @@ create_backup.ps1
 native/target/
 # stray cargo-ndk dependency cdylibs (not loaded at runtime)
 native/jniLibs/**/libif_watch-*.so
+native/jniLibs/**/libiroh-*.so
+native/jniLibs/**/libiroh_relay-*.so

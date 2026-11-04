@@ -10272,7 +10272,7 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
 name = "zoka"
-version = "4.0.3"
+version = "4.0.4"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -10338,6 +10338,7 @@ dependencies = [
  "chacha20poly1305 0.10.1",
  "hex",
  "jni 0.21.1",
+ "ndk-context",
  "rand 0.8.8",
  "rusqlite",
  "serde",
@@ -10366,6 +10367,7 @@ name = "zoka-pq-pool"
 version = "0.1.0"
 dependencies = [
  "blake2b_simd",
+ "blake3",
  "bs58",
  "chacha20poly1305 0.11.0",
  "p3-air",
@@ -10383,6 +10385,7 @@ dependencies = [
  "postcard",
  "rand 0.10.2",
  "serde",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "zeroize",
  "zoka-pq",

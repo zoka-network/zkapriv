@@ -1,6 +1,5 @@
-# -Features: lo que se compila en el motor. Por omision, el de los releases
-# (pq-experimental). Con Zoka Quantic: -Features "pq-experimental,quantic".
-param([string]$Features = "pq-experimental")
+# ZKAPriv 3 usa la testnet v2 STARK. Los motores anteriores se piden a propósito.
+param([string]$Features = "quantic-pq")
 
 $ErrorActionPreference = "Stop"
 

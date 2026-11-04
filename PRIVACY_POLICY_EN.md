@@ -1,166 +1,42 @@
-# Privacy Policy for ZkaPriv
+# ZKAPriv 3 privacy
 
-**Last Updated: November 10, 2025**
+Updated November 3, 2026. Zoka Quantic **testnet v2**, whose coins have no value.
 
-## Introduction
+ZKAPriv is self-custodial. Recovery phrases, spending keys and proof witnesses
+are not sent to servers. STARK proofs are generated on the phone. Android
+Keystore protects the encrypted recovery phrase, salted PIN verifier and
+security preferences. The wallet cache uses ChaCha20-Poly1305. Public peer
+identifiers and Tor's own cache are separate. Android handles biometrics;
+the app receives only the result.
 
-ZkaPriv ("we", "our", or "the app") respects your privacy and is committed to protecting your personal data. This Privacy Policy describes how we handle your information when you use our Zoka cryptocurrency wallet application.
+With Tor off, public block pages and checkpoints come from api.zokascan.cc,
+with zokascan.cc and P2P peers as alternatives. Requests specify block
+heights, not wallet addresses or view keys. Outputs are opened locally.
+Publishing a short address shares its full address with the directory.
+Resolving a recipient's short address reveals that query to the queried
+peers. Payments transmit completed proofs and encrypted outputs. Amounts
+and participants are not public on the chain. Memos are readable by sender
+and recipient through their respective view keys.
 
-## Information We Collect
+API operators, infrastructure providers and directly contacted peers may see
+your IP, timing and connection metadata, and may operate in other countries.
+ZKAPriv does not control their logs or promise absolute anonymity.
 
-### Information We DO NOT Collect
+Optional Tor uses embedded Arti for reading, directory operations and sending
+via onion peers. Failure does not fall back to direct connections. Operations
+already started may finish on their original route; changes apply to subsequent
+operations. External browsers and sharing targets use their own settings.
 
-ZkaPriv is a self-custodial wallet. This means:
+Camera access for QR scanning and biometrics are optional. Copying and sharing
+expose selected content to the clipboard or chosen app. A view key reveals
+balance and history but cannot spend; recovery phrases can spend. The version
+3 wallet flow has no price requests, advertising or usage telemetry. Wallet
+screenshots are blocked; debug design previews use synthetic data only.
 
-- We **DO NOT collect** your private keys
-- We **DO NOT collect** your seed phrases
-- We **DO NOT collect** personally identifiable information
-- We **DO NOT track** your activity
-- We **DO NOT share** data with third parties
-- We **DO NOT sell** your information
-
-### Information Stored Locally
-
-The following information is stored **only on your device** in encrypted form:
-
-- **Private Keys**: Stored using Android EncryptedSharedPreferences with AES-256 encryption
-- **Seed Phrases**: Encrypted locally, never transmitted
-- **Wallet Addresses**: Generated locally
-- **Transaction History**: Local cache to improve performance
-- **User Preferences**: App settings (theme, language, etc.)
-- **Security PIN**: Hashed and stored locally
-
-## How We Use Your Information
-
-All information is processed **locally on your device** to:
-
-- Generate and manage your Zoka wallet
-- Sign blockchain transactions
-- Display your balance and transaction history
-- Protect your wallet with PIN and biometric authentication
-- Personalize your user experience
-
-## Network Connections
-
-ZkaPriv connects to:
-
-### Zoka Blockchain
-- **Purpose**: Query balances, send transactions, verify network status
-- **Nodes**: Zoka mainnet public nodes
-- **Data Transmitted**: Public wallet addresses, signed transactions
-- **Data NOT Transmitted**: Private keys, seed phrases, personal information
-
-### Price API (Optional)
-- **Purpose**: Obtain current ZKA price in USD/EUR
-- **Provider**: Public cryptocurrency market APIs
-- **Data Transmitted**: No personal data, only public price requests
-
-## Data Security
-
-We implement enterprise-level security measures:
-
-- **AES-256-GCM Encryption**: For local key storage
-- **Android Keystore**: Cryptographic key protection
-- **Biometric Authentication**: Support for fingerprint and face recognition
-- **6-Digit PIN**: Additional security layer
-- **No Central Servers**: Your data never leaves your device
-
-## Your Responsibilities
-
-As a self-custodial wallet, **YOU are responsible for**:
-
-- Backing up your seed phrase securely
-- Keeping your PIN safe and confidential
-- Not sharing your private keys with anyone
-- Protecting your device with password/biometrics
-- Updating the app regularly
-
-⚠️ **IMPORTANT**: If you lose your seed phrase or PIN, **we CANNOT help you recover your wallet**. We have no access to your keys.
-
-## Android Permissions
-
-ZkaPriv requests the following permissions:
-
-| Permission | Purpose | Required |
-|------------|---------|----------|
-| **INTERNET** | Connect to Zoka blockchain | Yes |
-| **CAMERA** | Scan QR codes for addresses | Optional |
-| **USE_BIOMETRIC** | Fingerprint/face authentication | Optional |
-| **VIBRATE** | Haptic feedback | Optional |
-
-## Third-Party Data
-
-ZkaPriv does NOT share data with third parties. The only external connections are:
-
-1. **Zoka Blockchain**: Public decentralized network
-2. **Price APIs**: Public market data (anonymous)
-
-We do not use analytics, advertising, or tracking services.
-
-## Children's Privacy
-
-ZkaPriv is not designed for children under 18. We do not knowingly collect information from minors. If you are a parent/guardian and believe your child has provided us with information, contact us to delete it.
-
-## International Transfers
-
-Since we do not collect or transmit personal data to servers, there are no international data transfers.
-
-## Your Rights
-
-You have the right to:
-
-- **Access** all your data (stored locally on your device)
-- **Export** your transaction history
-- **Delete** all data by uninstalling the application
-- **Port** your wallet using your seed phrase in other compatible apps
-
-## Changes to This Policy
-
-We may update this Privacy Policy occasionally. We will notify you of significant changes through:
-
-- Updating the "Last Updated" date at the top
-- In-app notification (for significant changes)
-
-## Legal Compliance
-
-### GDPR (General Data Protection Regulation - Europe)
-ZkaPriv complies with GDPR because:
-- We do not process personal data on servers
-- Everything is local and encrypted
-- Users have complete control of their data
-
-### CCPA (California Consumer Privacy Act)
-ZkaPriv complies with CCPA because:
-- We do not sell personal information
-- We do not share data with third parties
-- We do not collect identifiable personal data
-
-## Open Source
-
-ZkaPriv is open-source software. You can review the source code to verify our privacy practices:
-
-- **Repository**: [GitHub - ZkaPriv](https://github.com/yourusername/zkapriv) *(update with your actual URL)*
-
-## Contact
-
-If you have questions about this Privacy Policy or your data, contact us:
-
-- **Email**: privacy@zkapriv.online *(update with your actual email)*
-- **Website**: https://zkapriv.online
-- **Location**: Luján, Buenos Aires, Argentina
-
-## Transparency
-
-ZkaPriv is committed to complete transparency:
-
-✅ **Open Source**: You can audit our code  
-✅ **No Tracking**: Zero analytics or trackers  
-✅ **No Ads**: We will never show advertisements  
-✅ **No Data Sales**: Your data is yours, not ours  
-✅ **Self-Custody**: YOU control your keys, always  
-
----
-
-**ZkaPriv - Your Zoka wallet, completely private.**
-
-*This privacy policy was generated on November 10, 2025 and complies with Google Play Store regulations, GDPR, CCPA, and best privacy practices for cryptocurrency applications.*
+Settings lets you authenticate to view recovery information, change the PIN
+and remove the wallet. Uninstalling removes app-private storage, not public
+chain transactions, published directory entries or copies you shared.
+Keep the 24 words before removing the wallet: we cannot recover them for you.
+Review the code or ask questions at
+[the ZKAPriv repository](https://github.com/zoka-network/zkapriv); never post
+recovery phrases, view keys, PINs or other secrets.

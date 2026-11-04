@@ -12,9 +12,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CallMade
 import androidx.compose.material.icons.outlined.CallReceived
-import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -22,11 +23,15 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.zoka.zkapriv.network.quantic.QuanticMovement
 import com.zoka.zkapriv.network.quantic.QuanticState
 import com.zoka.zkapriv.network.quantic.QuanticWallet.Companion.formatZka
@@ -56,87 +61,63 @@ const val EXPLORER = "https://zokascan.cc"
 fun HomeScreen(
     vm: WalletViewModel,
     onSend: () -> Unit,
-    onReceive: () -> Unit,
-    onScan: () -> Unit,
     onSettings: () -> Unit,
-    onHistory: () -> Unit,
-    onMovement: (String) -> Unit,
 ) {
     val state by vm.state.collectAsState()
-    ZkScreen(
-        title = null,
-        bottom = {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ZButton(onReceive, Modifier.weight(1f), ZButtonVariant.Accent, ZButtonSize.Large) {
-                    Icon(Icons.Outlined.CallReceived, null, Modifier.size(18.dp))
-                    ZButtonText("Receive")
-                }
-                ZButton(onSend, Modifier.weight(1f), ZButtonVariant.Primary, ZButtonSize.Large) {
-                    Icon(Icons.Outlined.CallMade, null, Modifier.size(18.dp))
-                    ZButtonText("Send")
-                }
-            }
-        },
-    ) {
+    val send by vm.sendState.collectAsState()
+    HomeContent(state, send.running, onSend, onSettings, vm::syncNow)
+}
+
+/** También se usa en la vista de diseño, con datos ficticios y sin billetera. */
+@Composable
+internal fun HomeContent(state: QuanticState, sending: Boolean, onSend: () -> Unit, onSettings: () -> Unit, onRefresh: () -> Unit,
+    sample: Boolean = false) {
+    ZkScreen(title = null) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             QuanticWordmark(MaterialTheme.typography.titleLarge, Modifier.weight(1f), suffix = "TESTNET")
-            IconButton(onClick = onScan) {
-                Icon(Icons.Outlined.QrCodeScanner, "Scan a QR code", tint = Zk.colors.text)
-            }
             IconButton(onClick = onSettings) {
-                Icon(Icons.Outlined.Settings, "Settings", tint = Zk.colors.text)
+                Icon(Icons.Outlined.Settings, "Settings", tint = Zk.colors.textMuted)
             }
         }
-        BalancePanel(state, vm.torMode())
-        state.error?.let { error ->
+        if (sample) Text("Design preview · Sample balance", style = MaterialTheme.typography.bodySmall, color = Zk.colors.textMuted)
+        BalancePanel(state, onRefresh)
+        if (state.error != null) {
             Notice(
-                error,
-                title = "Could not read the chain",
-                tone = ZkTone.Err,
+                "Showing your last known balance. We will retry automatically.",
+                title = "Out of date",
+                tone = ZkTone.Warn,
                 action = {
-                    ZButton({ vm.syncNow() }, size = ZButtonSize.Small) { ZButtonText("Try again") }
+                    ZButton(onRefresh, size = ZButtonSize.Small) { ZButtonText("Refresh") }
                 },
             )
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Eyebrow("Recent", Modifier.weight(1f))
-            if (state.history.isNotEmpty()) {
-                ZButton(onHistory, variant = ZButtonVariant.Ghost, size = ZButtonSize.Small) {
-                    ZButtonText("All")
+        PrivacyPanel(state)
+        if (sending || state.pendingTxid != null) {
+            Notice(
+                if (sending) "Your phone is still preparing and sending the payment." else "Your available balance updates when the payment is included in a block.",
+                title = if (sending) "Preparing your payment" else "Payment awaiting confirmation",
+                tone = ZkTone.Info,
+                action = {
+                    if (sending) ZButton(onSend, size = ZButtonSize.Small) { ZButtonText("View progress") }
                 }
-            }
-        }
-        if (state.history.isEmpty()) {
-            EmptyState(
-                if (state.loaded) "No movements yet" else "Reading the chain…",
-                sub = "Payments you send or receive show up here.",
             )
-        } else {
-            Panel(contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)) {
-                state.history.take(8).forEachIndexed { i, movement ->
-                    if (i > 0) ThinDivider()
-                    MovementRow(movement) { onMovement(movement.txid) }
-                }
-            }
         }
+        Text("Test network · Testnet ZKA have no value.", style = MaterialTheme.typography.bodySmall, color = Zk.colors.textMuted)
     }
 }
 
 @Composable
-private fun BalancePanel(state: QuanticState, tor: Boolean) {
-    Panel(
-        title = "Balance",
-        right = {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (tor) Pill("Tor", tone = ZkTone.Info)
-                SyncPill(state)
-            }
-        },
-    ) {
+private fun BalancePanel(state: QuanticState, onRefresh: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Eyebrow("Total balance", Modifier.weight(1f))
+            SyncPill(state)
+        }
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val balance = if (state.loaded) formatZka(state.balanceAtoms) else "—"
             Text(
-                formatZka(state.balanceAtoms),
-                style = Zk.text.monoDisplay,
+                balance,
+                style = Zk.text.monoDisplay.copy(fontSize = if (balance.length > 12) 25.sp else 32.sp),
                 color = Zk.colors.text,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -144,30 +125,69 @@ private fun BalancePanel(state: QuanticState, tor: Boolean) {
             )
             Text("ZKA", style = Zk.text.mono, color = Zk.colors.accent, modifier = Modifier.padding(bottom = 6.dp))
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Stat("Spendable", formatZka(state.spendableAtoms), Modifier.weight(1f))
-            Stat(
-                "Maturing",
-                formatZka(state.immatureAtoms),
-                Modifier.weight(1f),
-                hint = if (state.immatureAtoms > 0) "Mined rewards wait 60 blocks" else null,
-            )
+        Panel {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Stat("Available", if (state.loaded) formatZka(state.spendableAtoms) else "—", Modifier.weight(1f))
+                Stat(
+                    "Maturing",
+                    if (state.loaded) formatZka(state.immatureAtoms) else "—",
+                    Modifier.weight(1f),
+                )
+            }
+            if (state.reservedAtoms > 0) {
+                KeyValueRow("Reserved", formatZka(state.reservedAtoms) + " ZKA")
+            }
         }
-        if (state.reservedAtoms > 0) {
-            KeyValueRow("In a pending payment", formatZka(state.reservedAtoms) + " ZKA")
-        }
-        if (!state.inSync || state.syncing) {
+        if (!state.inSync) {
             MeterBar(state.progress)
         }
-        Text(
-            when {
-                state.tip == 0 -> "Waiting for the network"
-                state.inSync -> "Block ${"%,d".format(state.height)}" + (state.source?.let { " · via ${sourceName(it)}" } ?: "")
-                else -> "Block ${"%,d".format(state.height)} of ${"%,d".format(state.tip)}"
-            },
-            style = Zk.text.mono,
-            color = Zk.colors.textMuted,
-        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                when {
+                    state.syncing && !state.inSync -> "Reading block ${state.height} of ${state.tip}"
+                    state.lastSyncMillis > 0 -> "Updated ${DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(state.lastSyncMillis))}"
+                    else -> "Waiting for the network…"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = Zk.colors.textMuted,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onRefresh, enabled = !state.syncing) {
+                Icon(Icons.Outlined.Refresh, "Refresh balance", tint = Zk.colors.accent)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PrivacyPanel(state: QuanticState) {
+    var details by rememberSaveable { mutableStateOf(false) }
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Icon(Icons.Outlined.Shield, null, tint = Zk.colors.accent, modifier = Modifier.size(26.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Quantic privacy", color = Zk.colors.text, style = MaterialTheme.typography.titleMedium)
+                Text("STARK proofs · Hybrid X-Wing encryption", color = Zk.colors.textMuted, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        ThinDivider()
+        KeyValueRow("Connection", if (state.torEnabled) "Via Tor" else "Direct")
+        Text(if (state.verifiedHeight > 0) "Verified through block ${state.verifiedHeight}"
+            else "Waiting for chain verification", style = Zk.text.mono, color = Zk.colors.textMuted)
+        ZButton({ details = !details }, variant = ZButtonVariant.Ghost, size = ZButtonSize.Small) {
+            ZButtonText(if (details) "Hide network details" else "Network details")
+        }
+        if (details) {
+            Text("Your phone generates the proof. Amounts and recipients stay private.",
+                style = MaterialTheme.typography.bodySmall, color = Zk.colors.textMuted)
+            if (state.immatureAtoms > 0) Text("Mining rewards mature after 60 blocks.",
+                style = MaterialTheme.typography.bodySmall, color = Zk.colors.textMuted)
+            KeyValueRow("Blocks read", "${state.height} / ${state.tip}")
+            KeyValueRow("Source", state.source?.let(::sourceName) ?: "Waiting")
+            KeyValueRow("Known peers", state.peers.toString())
+            Text("Tor hides your IP from peers. You can enable it in Settings.",
+                style = MaterialTheme.typography.bodySmall, color = Zk.colors.textMuted)
+        }
     }
 }
 
@@ -179,9 +199,10 @@ private fun sourceName(source: String) = when (source) {
 
 @Composable
 private fun SyncPill(state: QuanticState) = when {
-    state.error != null && !state.syncing -> Pill("Offline", tone = ZkTone.Err)
-    state.syncing || !state.inSync -> Pill("Syncing", tone = ZkTone.Warn)
-    else -> Pill("Synced", tone = ZkTone.On)
+    state.error != null && !state.syncing -> Pill("Out of date", tone = ZkTone.Warn)
+    state.lastSyncMillis == 0L -> Pill("Connecting", tone = ZkTone.Info)
+    !state.inSync -> Pill("Syncing", tone = ZkTone.Warn)
+    else -> Pill("Up to date", tone = ZkTone.On)
 }
 
 @Composable
@@ -225,11 +246,13 @@ private fun shortDate(seconds: Long): String =
     DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(seconds * 1000))
 
 @Composable
-fun HistoryScreen(vm: WalletViewModel, onBack: () -> Unit, onMovement: (String) -> Unit) {
+fun HistoryScreen(vm: WalletViewModel, onMovement: (String) -> Unit) {
     val state by vm.state.collectAsState()
-    ZkScreen(title = "Movements", onBack = onBack) {
+    ZkScreen(title = "Activity", onBack = null, actions = {
+        IconButton(onClick = vm::syncNow) { Icon(Icons.Outlined.Refresh, "Refresh activity", tint = Zk.colors.accent) }
+    }) {
         if (state.history.isEmpty()) {
-            EmptyState("No movements yet", sub = "Payments you send or receive show up here.")
+            EmptyState("No activity yet", sub = "Payments you send and receive appear here.")
         } else {
             Panel(contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)) {
                 state.history.forEachIndexed { i, movement ->

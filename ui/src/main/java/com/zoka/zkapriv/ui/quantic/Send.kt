@@ -14,19 +14,21 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
@@ -38,7 +40,6 @@ import com.zoka.zkapriv.ui.components.ErrorText
 import com.zoka.zkapriv.ui.components.Eyebrow
 import com.zoka.zkapriv.ui.components.HintText
 import com.zoka.zkapriv.ui.components.KeyValueRow
-import com.zoka.zkapriv.ui.components.MeterBar
 import com.zoka.zkapriv.ui.components.Notice
 import com.zoka.zkapriv.ui.components.Panel
 import com.zoka.zkapriv.ui.components.Pill
@@ -52,10 +53,8 @@ import com.zoka.zkapriv.ui.components.ZInput
 import com.zoka.zkapriv.ui.components.ZLabel
 import com.zoka.zkapriv.ui.components.ZkTone
 import com.zoka.zkapriv.ui.components.middleTruncated
-import com.zoka.zkapriv.ui.components.zkPulseAlpha
 import com.zoka.zkapriv.ui.theme.Zk
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 private enum class SendStep { Form, Review, Pin, Working, Done, Failed }
@@ -76,23 +75,34 @@ fun SendScreen(
     vm: WalletViewModel,
     scanned: String?,
     onScan: () -> Unit,
-    onBack: () -> Unit,
     onDone: () -> Unit,
 ) {
     val state by vm.state.collectAsState()
-    val scope = rememberCoroutineScope()
+    val sending by vm.sendState.collectAsState()
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
-    var step by remember { mutableStateOf(SendStep.Form) }
+    var formStep by rememberSaveable { mutableStateOf(SendStep.Form) }
+    val step = when {
+        sending.running -> SendStep.Working
+        sending.result != null -> SendStep.Done
+        sending.error != null -> SendStep.Failed
+        else -> formStep
+    }
     var to by rememberSaveable { mutableStateOf("") }
     var amountText by rememberSaveable { mutableStateOf("") }
     var memo by rememberSaveable { mutableStateOf("") }
     var quote by remember { mutableStateOf<JSONObject?>(null) }
-    var result by remember { mutableStateOf<JSONObject?>(null) }
-    var failure by remember { mutableStateOf<String?>(null) }
+    val result = sending.result
+    val failure = sending.error
     var pin by remember { mutableStateOf("") }
     var pinError by remember { mutableStateOf<String?>(null) }
-    var startedAt by remember { mutableLongStateOf(0L) }
+    val view = LocalView.current
+    DisposableEffect(sending.running) {
+        val previous = view.keepScreenOn
+        if (sending.running) view.keepScreenOn = true
+        onDispose { view.keepScreenOn = previous }
+    }
+    BackHandler(step == SendStep.Review || step == SendStep.Pin) { formStep = SendStep.Form }
 
     LaunchedEffect(scanned) {
         if (scanned != null) {
@@ -108,7 +118,7 @@ fun SendScreen(
     }
     val amount = parseZka(amountText)
     val memoBytes = memo.toByteArray(Charsets.UTF_8).size
-    LaunchedEffect(amount) {
+    LaunchedEffect(amount, state.height, state.spendableAtoms, state.reservedAtoms) {
         quote = null
         if (amount != null && amount > 0) {
             delay(250)
@@ -119,19 +129,9 @@ fun SendScreen(
     val fee = quote?.optLong("fee_atoms") ?: 0L
 
     fun launchSend() {
-        step = SendStep.Working
-        startedAt = System.currentTimeMillis()
-        scope.launch {
-            runCatching { vm.startSend(to.trim(), amount!!, memo).await() }
-                .onSuccess {
-                    result = it
-                    step = SendStep.Done
-                }
-                .onFailure {
-                    failure = it.message ?: "The payment was not sent"
-                    step = SendStep.Failed
-                }
-        }
+        if (amount == null || !enough || state.pendingTxid != null) return
+        vm.startSend(to.trim(), amount, memo)
+        formStep = SendStep.Form
     }
 
     fun authorize() {
@@ -141,17 +141,17 @@ fun SendScreen(
         } else {
             pin = ""
             pinError = null
-            step = SendStep.Pin
+            formStep = SendStep.Pin
         }
     }
 
     when (step) {
         SendStep.Form -> ZkScreen(
             title = "Send ZKA",
-            onBack = onBack,
+            onBack = null,
             bottom = {
                 ZButton(
-                    onClick = { step = SendStep.Review },
+                    onClick = { formStep = SendStep.Review },
                     modifier = Modifier.fillMaxWidth(),
                     variant = ZButtonVariant.Primary,
                     size = ZButtonSize.Large,
@@ -214,7 +214,7 @@ fun SendScreen(
             )
             when {
                 amountText.isNotBlank() && amount == null -> ErrorText("Up to 6 decimals.")
-                quote != null && !enough -> ErrorText(quote!!.optString("reason", "Not enough mature funds."))
+                quote != null && !enough -> ErrorText("That amount exceeds what you can send from your available balance.")
                 quote != null -> HintText("Fee ${formatZka(fee)} ZKA · spendable ${formatZka(state.spendableAtoms)} ZKA")
                 else -> HintText("Spendable ${formatZka(state.spendableAtoms)} ZKA")
             }
@@ -224,7 +224,7 @@ fun SendScreen(
                 value = memo,
                 onValueChange = { memo = it },
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = "Optional. Only the recipient can read it.",
+                placeholder = "Optional. Encrypted with your payment.",
                 mono = false,
                 singleLine = false,
                 isError = memoBytes > 512,
@@ -234,9 +234,10 @@ fun SendScreen(
 
         SendStep.Review -> ZkScreen(
             title = "Review",
-            onBack = { step = SendStep.Form },
+            onBack = { formStep = SendStep.Form },
             bottom = {
-                ZButton(::authorize, Modifier.fillMaxWidth(), ZButtonVariant.Primary, ZButtonSize.Large) {
+                ZButton(::authorize, Modifier.fillMaxWidth(), ZButtonVariant.Primary, ZButtonSize.Large,
+                    enabled = enough && state.pendingTxid == null) {
                     ZButtonText("Send")
                 }
             },
@@ -261,7 +262,7 @@ fun SendScreen(
             )
         }
 
-        SendStep.Pin -> ZkScreen(title = "Confirm with PIN", onBack = { step = SendStep.Review }, scroll = false) {
+        SendStep.Pin -> ZkScreen(title = "Confirm with PIN", onBack = { formStep = SendStep.Review }, scroll = false) {
             LaunchedEffect(pin) {
                 if (pin.length == QuanticVault.PIN_LENGTH) {
                     when (val check = vm.checkPin(pin)) {
@@ -290,36 +291,38 @@ fun SendScreen(
             VSpace(12)
         }
 
-        SendStep.Working -> ZkScreen(title = null, scroll = false) {
+        SendStep.Working -> ZkScreen(title = "Private payment") {
             var elapsed by remember { mutableLongStateOf(0L) }
-            LaunchedEffect(startedAt) {
+            LaunchedEffect(sending.startedAt) {
                 while (true) {
-                    elapsed = (System.currentTimeMillis() - startedAt) / 1000
+                    elapsed = (System.currentTimeMillis() - sending.startedAt) / 1000
                     delay(1000)
                 }
             }
-            Spacer(Modifier.weight(1f))
-            SectionTitle(
-                "Sending",
-                "Proving on this phone…",
-                "The proof shows the network that the payment is valid without showing who pays whom or how much.",
-            )
             VSpace(8)
-            MeterBar(zkPulseAlpha(), Modifier.fillMaxWidth())
+            ProofMatrix(ProofResult.Working)
+            SectionTitle(
+                "ZOKA QUANTIC · STARK",
+                when (sending.phase) {
+                    1 -> "Connecting to the network…"
+                    2 -> "Generating the proof…"
+                    3 -> "Broadcasting payment…"
+                    else -> "Preparing your payment…"
+                },
+                "The zero-knowledge proof is generated on your phone. Your payment uses Quantic’s hybrid post-quantum encryption.",
+            )
             Text("%d:%02d".format(elapsed / 60, elapsed % 60), style = Zk.text.mono, color = Zk.colors.textMuted)
-            Spacer(Modifier.weight(1f))
-            HintText("Keep ZKAPriv open. Do not lock the phone.")
-            VSpace(12)
+            HintText("Keep ZKAPriv open while your payment completes.")
         }
 
         SendStep.Done -> ZkScreen(
             title = null,
             bottom = {
-                ZButton(onDone, Modifier.fillMaxWidth(), ZButtonVariant.Primary, ZButtonSize.Large) { ZButtonText("Done") }
+                ZButton({ vm.clearSendResult(); onDone() }, Modifier.fillMaxWidth(), ZButtonVariant.Primary, ZButtonSize.Large) { ZButtonText("Done") }
             },
         ) {
-            VSpace(40)
-            SectionTitle("Sent", "${formatZka(amount ?: 0)} ZKA on its way", "It counts once a block includes it.")
+            ProofMatrix(ProofResult.Accepted)
+            SectionTitle("Payment accepted", "${formatZka(sending.amountAtoms)} ZKA on its way", "The network accepted your payment. It is waiting to be included in a block.")
             Panel {
                 KeyValueRow("Fee", formatZka(result?.optLong("fee_atoms") ?: 0) + " ZKA")
                 KeyValueRow("Proof took", "%.1f s".format((result?.optLong("proving_ms") ?: 0) / 1000.0))
@@ -331,14 +334,15 @@ fun SendScreen(
         SendStep.Failed -> ZkScreen(
             title = null,
             bottom = {
-                ZButton({ step = SendStep.Form }, Modifier.fillMaxWidth(), ZButtonVariant.Outline, ZButtonSize.Large) {
+                ZButton({ vm.clearSendResult(); formStep = SendStep.Form }, Modifier.fillMaxWidth(), ZButtonVariant.Outline, ZButtonSize.Large) {
                     ZButtonText("Back")
                 }
             },
         ) {
-            VSpace(40)
-            SectionTitle("Not sent", "The payment did not go out", null)
+            ProofMatrix(ProofResult.Failed)
+            SectionTitle("Check your payment", if (state.pendingTxid != null) "Awaiting confirmation" else "Could not send", null)
             Notice(failure.orEmpty(), tone = ZkTone.Err)
+            if (state.pendingTxid != null) HintText("The payment may have reached the network. Funds stay reserved until confirmation or expiry. Do not repeat it yet.")
         }
     }
 }

@@ -15,7 +15,8 @@ Cómo habla ZKAPriv 3 con Zoka Quantic Testnet v2. El plan general está en
 | Puente JNI | `zkapriv/native/src/stark.rs` (feature `quantic-pq`) | JSON de entrada y salida; estado cifrado; prueba en un hilo con 64 MB de pila |
 | Envoltorio Kotlin | `network/.../nativebridge/ZokaStark.kt` | Llamadas tipadas; un `{"error"}` es una `StarkException` |
 
-Las ramas: `zkapriv-v2-motor` en el repo del nodo y `zkapriv-v2` en este.
+Las ramas: `main` en el repo del nodo (motor integrado en 4.0.4) y
+`zkapriv-v2` en este.
 
 ## Reglas
 
@@ -33,8 +34,10 @@ Las ramas: `zkapriv-v2-motor` en el repo del nodo y `zkapriv-v2` en este.
 - **Tor es opcional.** Con `tor_proxy` (el SOCKS de Arti,
   `ZokaNativeNetwork.startTor`) todo va solo a las semillas .onion: páginas
   por `SCAN_PAGE`, envío y directorio. Si ninguna contesta, no sale nada.
-- **Sin Tor**, las páginas pueden venir por HTTPS (`zokascan.cc/scan2`, con
-  la caché de Cloudflare) y entrar con `addPages`, o por P2P con `sync`.
+- **Sin Tor**, las páginas vienen primero de `api.zokascan.cc/scan2`, luego
+  de `zokascan.cc/scan2` si sirve páginas binarias, y entran con `addPages`;
+  si fallan ambas fuentes, se usa P2P con `sync`. Las páginas vacías también
+  se procesan: actualizan la punta. Las consultas evitan respuestas cacheadas.
 - **Pago pendiente:** sus notas quedan reservadas hasta que se mina o vence
   (altura + 20). Si la semilla lo rechaza, se liberan. Si no se sabe si
   llegó, quedan reservadas hasta el vencimiento. Un pago a la vez.
@@ -78,6 +81,7 @@ Las ramas: `zkapriv-v2-motor` en el repo del nodo y `zkapriv-v2` en este.
 | `confirmCheckpoint(phrase, stateDir, json)` | lo mismo, tras confirmar un checkpoint traído por HTTPS |
 | `quote(phrase, stateDir, amount)` | `enough`, `fee_atoms`, `inputs`, `max_sendable_atoms` |
 | `send(phrase, stateDir, to, amount, memo, torProxy)` | `txid`, `fee_atoms`, `expiry`, `proving_ms` |
+| `sendPhase()` | 0: preparación/espera; 1: conexión; 2: prueba; 3: transmisión. No toma el candado ni expone secretos |
 | `resolve(short, torProxy, stateDir?)` | la dirección completa o null |
 | `publish(phrase, torProxy, stateDir?)` | si el nodo la tomó |
 
@@ -94,16 +98,33 @@ Arma arm64-v8a y armeabi-v7a (el teléfono de pruebas es de 32 bits). Los
 `.so` de la 2.1.4 quedaron respaldados en
 `C:\Users\mderramus\ZOKA-respaldos\zkapriv-jniLibs-2.1.4-20261030`.
 
-## Pendiente en la app
+En Linux, con NDK r27d y libclang de LLVM instalado:
 
-- `QuanticWallet` (lado HTTPS) tiene que traer `https://api.zokascan.cc/checkpoint`
-  después de las páginas y pasarlo a `confirmCheckpoint`; la pantalla de inicio
-  puede mostrar "Verificado hasta el bloque N". No se tocó todavía porque el
-  archivo tiene cambios sin commitear de otra sesión (31/10).
+```bash
+ANDROID_NDK_HOME=/opt/zoka-android/android-ndk-r27d bash native/build-android-linux.sh
+```
 
-## Pendiente para que funcione contra la testnet real
+El script arma primero armeabi-v7a y luego arm64-v8a. Copia el motor y su
+`libc++_shared.so`, verifica los símbolos JNI y muestra hashes. No empaquetar
+los `.so` intermedios de iroh. `JNI_OnLoad` inicializa `ndk_context` para el
+DNS Android antes de abrir conexiones.
 
-Las semillas públicas tienen que correr un nodo con `SCAN_PAGE` (la 4.0.4,
-que sale de `zkapriv-v2-motor`): la PC (seed1) y el nodo del explorador
-(seed2, la .onion). Hasta entonces el teléfono puede leer por HTTPS si
-`/scan2` está publicado, y enviar por P2P (`SUBMIT_TX` ya existe en la 4.0.3).
+## Integración Android del 3/11
+
+`QuanticWallet` ya trae `/checkpoint` después de las páginas HTTPS y llama a
+`confirmCheckpoint`. Home muestra la altura verificada y los pares conocidos.
+El mismo estado observable alimenta Home, Activity y Receive; la publicación
+de una dirección solo se marca exitosa si el nodo la acepta.
+
+Un solo ciclo actualiza cada 10 segundos, cada 4 con un pago pendiente y
+cada segundo mientras alcanza la punta. Un error espera 15 segundos y vuelve
+a intentar. Volver a la app o terminar un envío pide una lectura inmediata.
+Los pedidos manuales se agrupan y no se superponen con el envío. Su resultado
+y las reservas se conservan aunque se cambie de pestaña o se bloquee la app.
+
+Las semillas permanentes seed2/seed3 ya corren 4.0.4. La validación del APK
+nuevo está en curso: pruebas JVM aprobadas y diseño comprobado en el Samsung
+SM-A135M; faltan terminar ambos motores y ejecutar la prueba instrumentada
+de HTTPS, P2P y Tor. Usa una billetera efímera aislada, sin leer el almacén
+del usuario ni enviar pagos. Los envíos y recepción reales los prueba el
+usuario antes de publicar.
