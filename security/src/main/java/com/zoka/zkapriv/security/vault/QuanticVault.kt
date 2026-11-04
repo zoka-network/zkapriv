@@ -23,6 +23,11 @@ import javax.inject.Singleton
  *   se compara en tiempo constante. Después de [MAX_PIN_ATTEMPTS] fallos
  *   seguidos, cada intento espera más.
  * - Preferencias: biometría, Modo Tor, altura de nacimiento.
+ * - Varias billeteras (3/11/2026): cada una con su frase, su nombre, su altura
+ *   de nacimiento y su carpeta de estado; una sola está activa y todo lo que
+ *   lee y firma la app es de esa. La primera (`main`) conserva las claves y la
+ *   carpeta de antes, así una billetera existente no se migra ni se vuelve a
+ *   sincronizar. El PIN, la biometría y el Modo Tor son de la app.
  */
 @Singleton
 class QuanticVault @Inject constructor(
@@ -41,26 +46,119 @@ class QuanticVault @Inject constructor(
         )
     }
 
-    /** Dónde vive el estado cifrado de la billetera liviana (lo escribe Rust). */
-    val stateDir: String get() = context.filesDir.resolve("stark").absolutePath
+    // ── Billeteras ───────────────────────────────────────────────────────────
 
-    fun hasWallet(): Boolean = prefs.getString(KEY_PHRASE, null) != null &&
-        prefs.getBoolean(KEY_READY, false)
+    /** Una billetera guardada en este teléfono. */
+    data class WalletEntry(val id: String, val name: String)
 
-    fun phrase(): String? = prefs.getString(KEY_PHRASE, null)
+    /** Los ids en el orden en que se agregaron; la de antes es `main`. */
+    private fun ids(): List<String> {
+        val stored = prefs.getString(KEY_WALLETS, null)
+        if (stored != null) return stored.split(',').filter { it.isNotBlank() }
+        return if (prefs.getString(KEY_PHRASE, null) != null) listOf(MAIN) else emptyList()
+    }
 
-    /** Guarda la frase de una billetera nueva o restaurada (todavía sin PIN). */
+    /** `main` usa las claves de siempre; las demás, la clave con su id. */
+    private fun key(base: String, id: String): String = if (id == MAIN) base else "$base.$id"
+
+    private fun stateDirOf(id: String): String =
+        context.filesDir.resolve(if (id == MAIN) "stark" else "stark-$id").absolutePath
+
+    fun wallets(): List<WalletEntry> = ids().map { WalletEntry(it, walletName(it)) }
+
+    fun walletName(id: String): String =
+        prefs.getString("$KEY_NAME.$id", null) ?: if (id == MAIN) "Main wallet" else "Wallet"
+
+    /** La billetera que se lee y se firma ahora. */
+    fun activeId(): String {
+        val all = ids()
+        return prefs.getString(KEY_ACTIVE, null)?.takeIf { it in all } ?: all.firstOrNull() ?: MAIN
+    }
+
+    fun selectWallet(id: String) {
+        require(id in ids()) { "There is no such wallet on this phone" }
+        prefs.edit().putString(KEY_ACTIVE, id).commit()
+    }
+
+    /**
+     * Agrega una billetera (nueva o restaurada) sin tocar el PIN ni las demás.
+     * Devuelve su id; no la activa.
+     */
+    fun addWallet(name: String, phrase: String, birth: Int): String {
+        val normalized = normalize(phrase)
+        val all = ids()
+        require(all.none { prefs.getString(key(KEY_PHRASE, it), null) == normalized }) {
+            "This wallet is already on this phone"
+        }
+        var id: String
+        do {
+            id = ByteArray(4).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
+        } while (id in all || id == MAIN)
+        prefs.edit()
+            .putString(key(KEY_PHRASE, id), normalized)
+            .putInt(key(KEY_BIRTH, id), birth)
+            .putBoolean(key(KEY_PUBLISHED, id), false)
+            .putString("$KEY_NAME.$id", name.trim().ifEmpty { "Wallet ${all.size + 1}" })
+            .putString(KEY_WALLETS, (all + id).joinToString(","))
+            .commit()
+        return id
+    }
+
+    fun renameWallet(id: String, name: String) {
+        require(id in ids()) { "There is no such wallet on this phone" }
+        val clean = name.trim()
+        require(clean.isNotEmpty() && clean.length <= MAX_NAME) { "A name has 1 to $MAX_NAME characters" }
+        prefs.edit().putString("$KEY_NAME.$id", clean).commit()
+    }
+
+    /**
+     * Saca una billetera del teléfono: su frase, su nombre y su estado. Quedan
+     * las demás; si era la activa, pasa a serlo la primera que queda. La última
+     * no se saca así: para eso está [wipe].
+     */
+    fun removeWallet(id: String) {
+        val all = ids()
+        require(id in all) { "There is no such wallet on this phone" }
+        require(all.size > 1) { "This is the only wallet on this phone" }
+        val rest = all - id
+        prefs.edit()
+            .remove(key(KEY_PHRASE, id))
+            .remove(key(KEY_BIRTH, id))
+            .remove(key(KEY_PUBLISHED, id))
+            .remove("$KEY_NAME.$id")
+            .putString(KEY_WALLETS, rest.joinToString(","))
+            .apply { if (activeId() == id) putString(KEY_ACTIVE, rest.first()) }
+            .commit()
+        java.io.File(stateDirOf(id)).deleteRecursively()
+    }
+
+    /** Dónde vive el estado cifrado de la billetera activa (lo escribe Rust). */
+    val stateDir: String get() = stateDirOf(activeId())
+
+    fun hasWallet(): Boolean = phrase() != null && prefs.getBoolean(KEY_READY, false)
+
+    /** La frase de la billetera activa. */
+    fun phrase(): String? = prefs.getString(key(KEY_PHRASE, activeId()), null)
+
+    /**
+     * Guarda la frase de la primera billetera, nueva o restaurada en el alta
+     * (todavía sin PIN). Las siguientes entran con [addWallet].
+     */
     fun storePhrase(phrase: String, birth: Int) {
         prefs.edit()
-            .putString(KEY_PHRASE, phrase.trim().split(Regex("\\s+")).joinToString(" "))
+            .putString(KEY_PHRASE, normalize(phrase))
             .putInt(KEY_BIRTH, birth)
             .putBoolean(KEY_READY, false)
             .putBoolean(KEY_PUBLISHED, false)
+            .putString(KEY_WALLETS, MAIN)
+            .putString(KEY_ACTIVE, MAIN)
             .apply()
     }
 
     /** Altura desde la que se abren salidas: la punta al crearla, 1 al restaurar. */
-    fun birth(): Int = prefs.getInt(KEY_BIRTH, 1)
+    fun birth(): Int = prefs.getInt(key(KEY_BIRTH, activeId()), 1)
+
+    private fun normalize(phrase: String) = phrase.trim().split(Regex("\\s+")).joinToString(" ")
 
     /** El onboarding terminó: hay frase respaldada y PIN. */
     fun markReady() {
@@ -125,13 +223,24 @@ class QuanticVault @Inject constructor(
      * responde 404: ni el nodo ni sus pares conocen la corta.
      */
     var addressPublished: Boolean
-        get() = prefs.getBoolean(KEY_PUBLISHED, false)
-        set(value) = prefs.edit().putBoolean(KEY_PUBLISHED, value).apply()
+        get() = isPublished(activeId())
+        set(value) = setPublished(activeId(), value)
 
-    /** Borra la billetera v3 de este teléfono: frase, PIN y estado. */
+    fun isPublished(id: String): Boolean = prefs.getBoolean(key(KEY_PUBLISHED, id), false)
+
+    /** Con el id explícito: una publicación que termina tras cambiar de billetera marca la suya. */
+    fun setPublished(id: String, value: Boolean) {
+        prefs.edit().putBoolean(key(KEY_PUBLISHED, id), value).apply()
+    }
+
+    /** Borra todas las billeteras v3 de este teléfono: frases, PIN y estado. */
     fun wipe() {
+        val dirs = ids().map(::stateDirOf)
         prefs.edit().clear().commit()
         context.filesDir.resolve("stark").deleteRecursively()
+        dirs.forEach { java.io.File(it).deleteRecursively() }
+        context.filesDir.listFiles { f -> f.isDirectory && f.name.startsWith("stark-") }
+            ?.forEach { it.deleteRecursively() }
     }
 
     private fun derive(pin: String, salt: ByteArray): ByteArray {
@@ -168,5 +277,10 @@ class QuanticVault @Inject constructor(
         private const val KEY_BIOMETRIC = "biometric"
         private const val KEY_TOR = "tor_mode"
         private const val KEY_PUBLISHED = "address_published"
+        private const val KEY_WALLETS = "wallets"
+        private const val KEY_ACTIVE = "active_wallet"
+        private const val KEY_NAME = "name"
+        const val MAIN = "main"
+        const val MAX_NAME = 24
     }
 }

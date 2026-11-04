@@ -17,7 +17,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -43,12 +42,23 @@ fun QuanticApp(vm: WalletViewModel, locked: Boolean, onUnlocked: () -> Unit,
     val route = entry?.destination?.route.orEmpty()
     val tabs = route in walletRoutes && !locked
 
+    // Wallet siempre es la base de la pila: volver a ella es sacar lo de
+    // arriba. La pantalla actual se lee del controlador en cada toque: la
+    // referencia a esta función que recibe la barra puede quedar memorizada con
+    // la ruta de cuando se dibujó, y con esa ruta vieja ("home") tocar Wallet
+    // desde Send o Receive no hacía nada (3/11/2026). Tampoco se usa
+    // restoreState: devolvía la pila guardada de otra pestaña.
     fun selectTab(destination: String) {
-        if (route == destination) return
+        if (nav.currentBackStackEntry?.destination?.route == destination) return
+        if (destination == "home") {
+            if (!nav.popBackStack("home", inclusive = false)) {
+                nav.navigate("home") { popUpTo(0); launchSingleTop = true }
+            }
+            return
+        }
         nav.navigate(destination) {
-            popUpTo("home") { saveState = true }
+            popUpTo("home")
             launchSingleTop = true
-            restoreState = true
         }
     }
     val start = remember {
@@ -156,9 +166,51 @@ fun QuanticApp(vm: WalletViewModel, locked: Boolean, onUnlocked: () -> Unit,
                 composable("home") {
                     HomeScreen(
                         vm,
-                        onSend = { selectTab("send") },
-                        onSettings = { nav.navigate("settings") },
+                        onWallets = { nav.navigate("wallets") { launchSingleTop = true } },
+                        onScan = { nav.navigate("scan") { launchSingleTop = true } },
+                        onNetwork = { nav.navigate("network") { launchSingleTop = true } },
+                        onSendProgress = { selectTab("send") },
                     )
+                }
+                composable("network") { NetworkScreen(vm, onBack = { nav.popBackStack() }) }
+
+                // ── Varias billeteras: lista y alta desde adentro ───────────────────
+                composable("wallets") {
+                    WalletsScreen(
+                        vm,
+                        onBack = { nav.popBackStack() },
+                        onCreate = {
+                            vm.startNewWallet()
+                            nav.navigate("wallets/backup")
+                        },
+                        onRestore = { nav.navigate("wallets/restore") },
+                    )
+                }
+                composable("wallets/backup") {
+                    val words = remember { vm.draftPhrase?.split(" ").orEmpty() }
+                    BackupPhraseScreen(
+                        words,
+                        onBack = {
+                            vm.clearDraft()
+                            nav.popBackStack()
+                        },
+                        onContinue = { nav.navigate("wallets/verify") },
+                    )
+                }
+                composable("wallets/verify") {
+                    val words = remember { vm.draftPhrase?.split(" ").orEmpty() }
+                    VerifyPhraseScreen(words, onBack = { nav.popBackStack() }, onVerified = { nav.navigate("wallets/name") })
+                }
+                composable("wallets/restore") {
+                    RestoreScreen(vm::validPhrase, onBack = { nav.popBackStack() }, onRestored = { phrase ->
+                        vm.useRestoredPhrase(phrase)
+                        nav.navigate("wallets/name")
+                    })
+                }
+                composable("wallets/name") {
+                    WalletNameScreen(vm, onBack = { nav.popBackStack() }, onAdded = {
+                        nav.popBackStack("home", inclusive = false)
+                    })
                 }
                 composable("send") { entry ->
                     var scanned by remember { mutableStateOf<String?>(null) }
@@ -181,7 +233,19 @@ fun QuanticApp(vm: WalletViewModel, locked: Boolean, onUnlocked: () -> Unit,
                 composable("scan") {
                     QrScannerScreen(
                         onNavigateBack = { nav.popBackStack() },
-                        onQrCodeScanned = { text -> deliverScan(nav, text) },
+                        onQrCodeScanned = { text ->
+                            // Escaneado desde Send vuelve con el resultado; desde
+                            // el inicio, abre la pestaña Send con lo leído.
+                            val previous = nav.previousBackStackEntry
+                            if (previous?.destination?.route == "send") {
+                                previous.savedStateHandle["qr"] = text
+                                nav.popBackStack()
+                            } else {
+                                nav.popBackStack()
+                                selectTab("send")
+                                nav.currentBackStackEntry?.savedStateHandle?.set("qr", text)
+                            }
+                        },
                     )
                 }
                 composable("receive") { ReceiveScreen(vm) }
@@ -194,7 +258,9 @@ fun QuanticApp(vm: WalletViewModel, locked: Boolean, onUnlocked: () -> Unit,
                 composable("settings") {
                     SettingsScreen(
                         vm,
-                        onBack = { nav.popBackStack() },
+                        onBack = null,
+                        onWallets = { nav.navigate("wallets") { launchSingleTop = true } },
+                        onNetwork = { nav.navigate("network") { launchSingleTop = true } },
                         onReveal = { nav.navigate("reveal/$it") },
                         onChangePin = { nav.navigate("changepin") },
                         onWiped = { nav.navigate("welcome") { popUpTo(0) } },
@@ -209,21 +275,5 @@ fun QuanticApp(vm: WalletViewModel, locked: Boolean, onUnlocked: () -> Unit,
             }
         }
         if (tabs) WalletNavigation(route, ::selectTab)
-    }
-}
-
-/**
- * Lo escaneado va a "enviar": si se escaneó desde ahí, vuelve con el
- * resultado; si se escaneó desde el inicio, abre "enviar" con él.
- */
-private fun deliverScan(nav: NavHostController, text: String) {
-    val previous = nav.previousBackStackEntry
-    if (previous?.destination?.route == "send") {
-        previous.savedStateHandle["qr"] = text
-        nav.popBackStack()
-    } else {
-        nav.popBackStack()
-        nav.navigate("send")
-        nav.currentBackStackEntry?.savedStateHandle?.set("qr", text)
     }
 }

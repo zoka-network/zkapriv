@@ -76,6 +76,7 @@ fun SendScreen(
     scanned: String?,
     onScan: () -> Unit,
     onDone: () -> Unit,
+    onBack: (() -> Unit)? = null,
 ) {
     val state by vm.state.collectAsState()
     val sending by vm.sendState.collectAsState()
@@ -148,7 +149,7 @@ fun SendScreen(
     when (step) {
         SendStep.Form -> ZkScreen(
             title = "Send ZKA",
-            onBack = null,
+            onBack = onBack,
             bottom = {
                 ZButton(
                     onClick = { formStep = SendStep.Review },

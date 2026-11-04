@@ -95,6 +95,78 @@ class WalletViewModel @Inject constructor(
     private fun normalize(phrase: String) =
         phrase.trim().lowercase().split(Regex("\\s+")).joinToString(" ")
 
+    /** Descarta una frase en curso (se salió del alta de una billetera más). */
+    fun clearDraft() { draftPhrase = null }
+
+    // ── Billeteras ───────────────────────────────────────────────────────────
+
+    private val _wallets = MutableStateFlow(wallet.wallets())
+    val wallets: StateFlow<List<QuanticVault.WalletEntry>> = _wallets.asStateFlow()
+    private val _activeWallet = MutableStateFlow(wallet.activeWalletId())
+    val activeWallet: StateFlow<String> = _activeWallet.asStateFlow()
+
+    private fun refreshWallets() {
+        _wallets.value = wallet.wallets()
+        _activeWallet.value = wallet.activeWalletId()
+    }
+
+    fun nextWalletName(): String = "Wallet ${_wallets.value.size + 1}"
+
+    /** Pasa a otra billetera. Mientras un pago se arma, no. */
+    fun switchWallet(id: String, onDone: () -> Unit = {}) {
+        if (_sendState.value.running || id == wallet.activeWalletId()) {
+            onDone()
+            return
+        }
+        viewModelScope.launch {
+            stopSync()
+            try {
+                wallet.switchTo(id)
+            } finally {
+                _sendState.value = SendState()
+                refreshWallets()
+                startSync()
+                onDone()
+            }
+        }
+    }
+
+    /** Agrega la billetera en curso (nueva y verificada, o restaurada) y pasa a ella. */
+    fun addDraftWallet(name: String, onDone: (Result<Unit>) -> Unit) {
+        val phrase = draftPhrase ?: return onDone(Result.failure(IllegalStateException("There is no phrase to add")))
+        if (_sendState.value.running) {
+            return onDone(Result.failure(IllegalStateException("Wait until your payment finishes")))
+        }
+        viewModelScope.launch {
+            stopSync()
+            val result = runCatching { wallet.addWallet(name, phrase) }
+            if (result.isSuccess) {
+                draftPhrase = null
+                _sendState.value = SendState()
+            }
+            refreshWallets()
+            startSync()
+            onDone(result.map { })
+        }
+    }
+
+    fun renameWallet(id: String, name: String): Result<Unit> =
+        runCatching { wallet.renameWallet(id, name) }.also { refreshWallets() }
+
+    /** Saca una billetera del teléfono. Solo sus 24 palabras la devuelven. */
+    fun removeWallet(id: String, onDone: (Result<Unit>) -> Unit) {
+        if (_sendState.value.running) {
+            return onDone(Result.failure(IllegalStateException("Wait until your payment finishes")))
+        }
+        viewModelScope.launch {
+            stopSync()
+            val result = runCatching { wallet.removeWallet(id) }
+            refreshWallets()
+            startSync()
+            onDone(result)
+        }
+    }
+
     // ── Bloqueo ──────────────────────────────────────────────────────────────
 
     fun biometricEnabled(): Boolean = vault.biometricEnabled
@@ -217,6 +289,7 @@ class WalletViewModel @Inject constructor(
         stopSync()
         vault.wipe()
         wallet.forget()
+        refreshWallets()
     }
 
     override fun onCleared() {

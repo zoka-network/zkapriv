@@ -48,19 +48,19 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen(
     vm: WalletViewModel,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     onReveal: (String) -> Unit,
     onChangePin: () -> Unit,
     onWiped: () -> Unit,
+    onNetwork: () -> Unit = {},
+    onWallets: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val state by vm.state.collectAsState()
     val sending by vm.sendState.collectAsState()
     val theme by vm.themeMode.collectAsState()
     val animations by vm.animations.collectAsState()
     var biometric by remember { mutableStateOf(vm.biometricEnabled()) }
-    var tor by remember { mutableStateOf(vm.torMode()) }
     var confirmWipe by remember { mutableStateOf(false) }
     val version = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull()
@@ -69,8 +69,12 @@ fun SettingsScreen(
     fun open(url: String) = context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
 
     ZkScreen(title = "Settings", onBack = onBack) {
+        Panel(title = "Wallets") {
+            SettingRow("Wallets", "Switch, create or restore wallets on this phone.", onWallets)
+        }
+
         Panel(title = "Security") {
-            SettingRow("Recovery phrase", "The 24 words. Ask for your PIN first.") { onReveal("phrase") }
+            SettingRow("Recovery phrase", "The 24 words of the wallet in use. Asks for your PIN.") { onReveal("phrase") }
             ThinDivider()
             SettingRow("View key", "Shows your balance to whoever has it, without spending.") { onReveal("viewkey") }
             ThinDivider()
@@ -92,35 +96,7 @@ fun SettingsScreen(
         }
 
         Panel(title = "Network") {
-            SwitchRow(
-                "Tor mode",
-                "Reach the network only through Tor, to the onion seeds. Slower; your IP stays hidden.",
-                tor,
-            ) { enabled ->
-                tor = enabled
-                vm.setTorMode(enabled)
-            }
-            if (tor) {
-                Notice(
-                    "Tor starts inside ZKAPriv. If it cannot start, the wallet stays offline: it never connects without it.",
-                    tone = ZkTone.Info,
-                )
-            }
-            ThinDivider()
-            KeyValueRow("Network", "Zoka Quantic Testnet v2")
-            KeyValueRow("Block", "%,d".format(state.height))
-            KeyValueRow(
-                "Reads from",
-                when (state.source) {
-                    "https" -> "zokascan.cc"
-                    "tor" -> "onion seed (Tor)"
-                    "p2p" -> "seed (P2P)"
-                    else -> "—"
-                },
-            )
-            ZButton({ vm.syncNow() }, Modifier.fillMaxWidth(), enabled = !state.syncing) {
-                ZButtonText(if (state.syncing) "Syncing…" else "Sync now")
-            }
+            SettingRow("Network & Tor", "Connection, sync, verification and Tor mode.", onNetwork)
         }
 
         Panel(title = "Appearance") {
@@ -162,7 +138,7 @@ fun SettingsScreen(
                 Notice("Wait until your payment finishes before removing the wallet.", tone = ZkTone.Warn)
             } else {
                 Text(
-                    "Remove this wallet from the phone. Only the 24 words bring it back.",
+                    "Remove every wallet and setting from this phone. Only their 24 words bring them back.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Zk.colors.textMuted,
                 )
@@ -188,7 +164,7 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun SettingRow(title: String, sub: String?, onClick: () -> Unit) {
+internal fun SettingRow(title: String, sub: String?, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -202,7 +178,7 @@ private fun SettingRow(title: String, sub: String?, onClick: () -> Unit) {
 }
 
 @Composable
-private fun SwitchRow(title: String, sub: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SwitchRow(title: String, sub: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).padding(end = 12.dp)) {
             Text(title, style = MaterialTheme.typography.bodyLarge, color = Zk.colors.text)

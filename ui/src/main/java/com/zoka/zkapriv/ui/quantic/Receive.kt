@@ -42,7 +42,7 @@ import kotlinx.coroutines.launch
  * La corta sirve cuando la red conoce la completa: se publica una vez.
  */
 @Composable
-fun ReceiveScreen(vm: WalletViewModel) {
+fun ReceiveScreen(vm: WalletViewModel, onBack: (() -> Unit)? = null) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val short = remember { vm.shortAddress() }
@@ -58,7 +58,7 @@ fun ReceiveScreen(vm: WalletViewModel) {
         context.startActivity(Intent.createChooser(send, "Share address"))
     }
 
-    ZkScreen(title = "Receive ZKA") {
+    ZkScreen(title = "Receive ZKA", onBack = onBack) {
         Segmented(listOf("Short", "Full"), which, { which = it }, Modifier.fillMaxWidth())
         if (which == "Short") {
             Panel {

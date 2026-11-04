@@ -58,6 +58,11 @@ data class QuanticState(
     val torEnabled: Boolean = false,
     val addressPublished: Boolean = false,
     val error: String? = null,
+    /**
+     * Hashrate estimado de la red, de `api.zokascan.cc/status` (la misma API de
+     * las páginas). 0 si no se sabe: en el Modo Tor no se le pregunta.
+     */
+    val hashrateHps: Long = 0,
 ) {
     val balanceAtoms: Long get() = spendableAtoms + immatureAtoms + reservedAtoms
     /** Avance de la lectura de la cadena, de 0 a 1. */
@@ -108,6 +113,54 @@ class QuanticWallet @Inject constructor(
         vault.storePhrase(phrase, birth = 1)
         info = null
         _state.value = QuanticState()
+    }
+
+    // ── Varias billeteras ────────────────────────────────────────────────────
+
+    fun wallets(): List<QuanticVault.WalletEntry> = vault.wallets()
+
+    fun activeWalletId(): String = vault.activeId()
+
+    /**
+     * Pasa a otra billetera. Toma el mismo candado que la sincronización y el
+     * envío: nunca se mezcla el estado de dos billeteras.
+     */
+    suspend fun switchTo(id: String) = withContext(Dispatchers.IO) {
+        busy.withLock {
+            vault.selectWallet(id)
+            info = null
+            _state.value = QuanticState()
+            reloadStatus()
+        }
+    }
+
+    /**
+     * Agrega una billetera nueva o restaurada y pasa a ella. Lee desde el
+     * bloque 1, como la primera.
+     */
+    suspend fun addWallet(name: String, phrase: String) = withContext(Dispatchers.IO) {
+        busy.withLock {
+            val id = vault.addWallet(name, phrase, birth = 1)
+            vault.selectWallet(id)
+            info = null
+            _state.value = QuanticState()
+            reloadStatus()
+        }
+    }
+
+    fun renameWallet(id: String, name: String) = vault.renameWallet(id, name)
+
+    /** Saca una billetera del teléfono; si era la activa, carga la que queda. */
+    suspend fun removeWallet(id: String) = withContext(Dispatchers.IO) {
+        busy.withLock {
+            val wasActive = vault.activeId() == id
+            vault.removeWallet(id)
+            if (wasActive) {
+                info = null
+                _state.value = QuanticState()
+                reloadStatus()
+            }
+        }
     }
 
     private fun phrase(): String = vault.phrase() ?: error("There is no wallet on this phone")
@@ -193,6 +246,8 @@ class QuanticWallet @Inject constructor(
                 val checkpoint = response.body?.string() ?: error("Checkpoint vacío")
                 reply = ZokaStark.confirmCheckpoint(phrase, vault.stateDir, checkpoint)
             }
+            // Solo para mostrar: si falla, el saldo ya quedó leído y verificado.
+            networkHashrate()?.let { hps -> _state.update { it.copy(hashrateHps = hps) } }
             reply to "https"
         } catch (https: Exception) {
             if (https is CancellationException) throw https
@@ -206,6 +261,16 @@ class QuanticWallet @Inject constructor(
             }
         }
     }
+
+    /** `hashrate_estimate_hps` del explorador; null si no contesta. */
+    private fun networkHashrate(): Long? = runCatching {
+        val request = Request.Builder().url("https://api.zokascan.cc/status").get().build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            JSONObject(response.body?.string() ?: return null).optLong("hashrate_estimate_hps", 0)
+                .takeIf { it > 0 }
+        }
+    }.getOrNull()
 
     /** También las páginas vacías se verifican en Rust: actualizan la punta. */
     private fun fetchPage(from: Int): ByteArray {
@@ -285,8 +350,11 @@ class QuanticWallet @Inject constructor(
 
     suspend fun publishAddress(): Boolean = withContext(Dispatchers.IO) {
         publishing.withLock {
+            // El id al empezar: si en el medio se cambia de billetera, se
+            // marca como publicada la que se publicó.
+            val id = vault.activeId()
             val accepted = ZokaStark.publish(phrase(), route(), vault.stateDir)
-            if (accepted) vault.addressPublished = true
+            if (accepted) vault.setPublished(id, true)
             _state.update { it.copy(addressPublished = vault.addressPublished) }
             accepted
         }
