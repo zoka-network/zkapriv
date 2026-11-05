@@ -70,3 +70,23 @@ Antes de publicar: APK release con el keystore existente, comparación de su
 certificado con el instalado, comprobación de los dos motores empaquetados y
 SHA-256 del APK. No mezclar un motor nuevo con otro ABI anterior. La firma
 se hace en la PC; las claves no se copian al VPS ni se imprimen.
+
+## Resultado del 4/11/2026: aprobado para publicar
+
+- **Prueba del usuario con dinero de la testnet**, con ZKAPriv Testnet
+  (`com.zoka.zkapriv.benchmark` 3.0.0) en el Samsung: ZSilent → billetera web,
+  billetera web → ZKAPriv y ZKAPriv → ZSilent. Los tres pagos se minaron
+  (bloques 4789, 4791 y 4809, de 1,94 MB cada uno) y llegaron.
+- **APK release** armado otra vez desde `e356c24` con el árbol limpio, después
+  de sacar de `native/jniLibs/armeabi-v7a` tres restos ignorados por git que se
+  empaquetaban sin que nada los cargara (`libif_watch-…`, `libiroh-…`,
+  `libiroh_relay-…`; guardados en `target/zkapriv-3-review/`). Los motores
+  dependen solo de `libc`, `libm` y `libdl`.
+  - `com.zoka.zkapriv`, versionCode 18, versionName 3.0.0.
+  - Firma v2 con el mismo certificado que la 2.1.3 instalada
+    (`061376f8c4e3bc54a01ccfa7279124568cfdffe4c23f8625b42f673eddc64532`):
+    se instala encima.
+  - `libzoka_mobile.so`: arm64-v8a `38cabdd5c566…` (la compilación del VPS 2
+    registrada) y armeabi-v7a `3ed07e893e6e…` (3/11), iguales a `jniLibs`.
+  - SHA-256 del APK:
+    `e701a319c5e565e0568b37c5ab21f39c69cfc0ccf522bf980904b99cd079ba04`.
