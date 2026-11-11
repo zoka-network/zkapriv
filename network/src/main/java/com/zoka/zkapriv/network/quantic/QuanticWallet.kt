@@ -173,8 +173,15 @@ class QuanticWallet @Inject constructor(
     /** La dirección corta (57 caracteres): la que se comparte. */
     fun shortAddress(): String = info().getString("short")
 
-    /** Pide autenticación antes de llamarla: muestra el saldo a quien la tenga. */
-    fun viewKey(): String = ZokaStark.viewKey(phrase())
+    /** Pide autenticación antes de llamarla. No cambia el almacén ni el estado de sincronización. */
+    suspend fun viewKey(expectedWalletId: String, scope: ViewKeyScope = ViewKeyScope.INCOMING): String =
+        withContext(Dispatchers.IO) {
+            busy.withLock {
+                exportViewKeyForWallet(expectedWalletId, vault::activeId, scope) {
+                    ZokaStark.viewKey(phrase(), it)
+                }
+            }
+        }
 
     /** El estado guardado, sin red. */
     suspend fun load() = withContext(Dispatchers.IO) {

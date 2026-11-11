@@ -6,6 +6,7 @@ import com.zoka.zkapriv.core.preferences.ThemeManager
 import com.zoka.zkapriv.core.preferences.ThemeMode
 import com.zoka.zkapriv.network.quantic.QuanticState
 import com.zoka.zkapriv.network.quantic.QuanticWallet
+import com.zoka.zkapriv.network.quantic.ViewKeyScope
 import com.zoka.zkapriv.security.vault.QuanticVault
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -224,7 +225,8 @@ class WalletViewModel @Inject constructor(
 
     fun shortAddress(): String = wallet.shortAddress()
     fun fullAddress(): String = wallet.fullAddress()
-    fun viewKey(): String = wallet.viewKey()
+    suspend fun viewKey(expectedWalletId: String, scope: ViewKeyScope = ViewKeyScope.INCOMING): String =
+        wallet.viewKey(expectedWalletId, scope)
     fun phrase(): String? = vault.phrase()
 
     suspend fun publishAddress(): Result<Boolean> = try {

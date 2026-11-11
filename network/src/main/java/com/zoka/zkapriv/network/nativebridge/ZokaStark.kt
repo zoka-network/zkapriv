@@ -1,5 +1,6 @@
 package com.zoka.zkapriv.network.nativebridge
 
+import com.zoka.zkapriv.network.quantic.ViewKeyScope
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -66,8 +67,13 @@ object ZokaStark {
     /** `address` (completa, ~1760 caracteres) y `short` (57). */
     fun walletInfo(phrase: String): JSONObject = call(base(phrase), ::walletInfo0)
 
-    /** La clave de vista `zqtestview2…`: muestra el saldo sin poder gastar. */
-    fun viewKey(phrase: String): String = call(base(phrase), ::viewKey0).getString("view_key")
+    /** Derivación local. Por defecto comparte solo entrantes, nunca saldo ni gastos. */
+    fun viewKey(phrase: String, scope: ViewKeyScope = ViewKeyScope.INCOMING): String {
+        val reply = call(base(phrase).put("view_key_kind", scope.wireName), ::viewKey0)
+        // Un .so anterior ignora el campo y devuelve la clave completa sin kind.
+        // Fallar cerrado evita mostrarla como si tuviera el alcance reducido.
+        return scope.validateExport(reply.optString("kind"), reply.getString("view_key"))
+    }
 
     /** `valid` y `kind` (`full` o `short`). */
     fun checkAddress(address: String): JSONObject =

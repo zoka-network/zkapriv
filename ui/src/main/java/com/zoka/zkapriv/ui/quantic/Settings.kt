@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -27,6 +28,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import com.zoka.zkapriv.core.preferences.ThemeMode
+import com.zoka.zkapriv.network.quantic.ViewKeyScope
 import com.zoka.zkapriv.security.vault.QuanticVault
 import com.zoka.zkapriv.ui.components.CopyButton
 import com.zoka.zkapriv.ui.components.ErrorText
@@ -44,6 +46,7 @@ import com.zoka.zkapriv.ui.components.ZToggle
 import com.zoka.zkapriv.ui.components.ZkTone
 import com.zoka.zkapriv.ui.theme.Zk
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
 @Composable
 fun SettingsScreen(
@@ -76,7 +79,7 @@ fun SettingsScreen(
         Panel(title = "Security") {
             SettingRow("Recovery phrase", "The 24 words of the wallet in use. Asks for your PIN.") { onReveal("phrase") }
             ThinDivider()
-            SettingRow("View key", "Shows your balance to whoever has it, without spending.") { onReveal("viewkey") }
+            SettingRow("View keys", "Share incoming payments only, or choose full history and balance.") { onReveal("viewkey") }
             ThinDivider()
             SettingRow("Change PIN", null, onChangePin)
             ThinDivider()
@@ -194,11 +197,23 @@ internal fun SwitchRow(title: String, sub: String?, checked: Boolean, onChange: 
  */
 @Composable
 fun RevealScreen(vm: WalletViewModel, what: String, onBack: () -> Unit) {
+    val walletId by vm.activeWallet.collectAsState()
+    // Ni la autenticación ni un resultado tardío sobreviven al cambio de billetera.
+    key(walletId, what) {
+        WalletRevealScreen(vm, walletId, what, onBack)
+    }
+}
+
+@Composable
+private fun WalletRevealScreen(vm: WalletViewModel, walletId: String, what: String, onBack: () -> Unit) {
     val context = LocalContext.current
     var unlocked by remember { mutableStateOf(false) }
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
-    val title = if (what == "phrase") "Recovery phrase" else "View key"
+    var viewScope by remember { mutableStateOf(ViewKeyScope.INCOMING) }
+    var exportedKey by remember(viewScope) { mutableStateOf<String?>(null) }
+    var exportError by remember(viewScope) { mutableStateOf<String?>(null) }
+    val title = if (what == "phrase") "Recovery phrase" else "View keys"
     LaunchedEffect(Unit) {
         val activity = context as? FragmentActivity
         if (vm.biometricEnabled() && activity != null) {
@@ -213,6 +228,18 @@ fun RevealScreen(vm: WalletViewModel, what: String, onBack: () -> Unit) {
                 is QuanticVault.PinCheck.Wait -> error = "Too many wrong PINs. Wait ${(check.millis + 999) / 1000} s."
             }
             pin = ""
+        }
+    }
+    LaunchedEffect(unlocked, viewScope) {
+        if (unlocked && what != "phrase") {
+            try {
+                exportedKey = vm.viewKey(walletId, viewScope)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // No propagar errores nativos que pudieran contener datos sensibles.
+                exportError = "Could not load this view key. Go back and try again with the latest ZKAPriv version."
+            }
         }
     }
     if (!unlocked) {
@@ -244,14 +271,31 @@ fun RevealScreen(vm: WalletViewModel, what: String, onBack: () -> Unit) {
             )
             WordGrid(vm.phrase().orEmpty().split(" "))
         } else {
-            val key = remember { vm.viewKey() }
+            Segmented(
+                listOf("Incoming", "Full"),
+                if (viewScope == ViewKeyScope.INCOMING) "Incoming" else "Full",
+                { viewScope = if (it == "Full") ViewKeyScope.FULL else ViewKeyScope.INCOMING },
+                Modifier.fillMaxWidth(),
+            )
             Notice(
-                "Whoever has this key sees your balance and history (on zokascan.cc/wallet, say), but cannot spend.",
+                if (viewScope == ViewKeyScope.INCOMING)
+                    "Shows incoming payments and their memos. It cannot show spending or your current balance, and cannot spend coins."
+                else
+                    "Shows incoming and outgoing payments, memos and your balance. Share only with someone you trust with your full history. It cannot spend coins.",
+                title = viewScope.title,
                 tone = ZkTone.Warn,
             )
-            Panel {
-                MonoText(key, maxLines = 12)
-                CopyButton(key, Modifier.fillMaxWidth(), label = "Copy view key")
+            if (viewScope == ViewKeyScope.INCOMING) {
+                HintText("Change is excluded automatically for payments made with updated wallets. Older wallets did not label change, so earlier change can appear as an incoming payment. Incoming totals are not a balance.")
+            }
+            when {
+                exportError != null -> ErrorText(exportError!!)
+                exportedKey == null -> HintText("Loading view key…")
+                else -> Panel {
+                    val value = exportedKey!!
+                    MonoText(value, maxLines = 12)
+                    CopyButton(value, Modifier.fillMaxWidth(), label = "Copy ${viewScope.title.lowercase()}")
+                }
             }
         }
     }

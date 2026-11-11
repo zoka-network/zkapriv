@@ -93,6 +93,15 @@ fn state_lock() -> std::sync::MutexGuard<'static, ()> {
 
 // ── Pedido común ─────────────────────────────────────────────────────────────
 
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ViewKeyKind {
+    Incoming,
+    // Los clientes anteriores que no mandan el campo siguen recibiendo su clave completa.
+    #[default]
+    Full,
+}
+
 #[derive(Deserialize)]
 struct Request {
     #[serde(default)]
@@ -121,6 +130,8 @@ struct Request {
     /// Un checkpoint firmado, tal como lo da `/checkpoint` de la API.
     #[serde(default)]
     checkpoint: Option<Value>,
+    #[serde(default)]
+    view_key_kind: ViewKeyKind,
 }
 
 fn default_network() -> String {
@@ -361,7 +372,11 @@ fn wallet_info(json: &str) -> Result<String, String> {
 fn view_key(json: &str) -> Result<String, String> {
     let request = Request::parse(json)?;
     let (account, _) = request.account()?;
-    Ok(json!({ "view_key": account.view_key().map_err(err)?.encode() }).to_string())
+    let (key, kind) = match request.view_key_kind {
+        ViewKeyKind::Incoming => (account.incoming_view_key().map_err(err)?.encode(), "incoming"),
+        ViewKeyKind::Full => (account.view_key().map_err(err)?.encode(), "full"),
+    };
+    Ok(json!({ "view_key": key, "kind": kind }).to_string())
 }
 
 fn check_address(json: &str) -> Result<String, String> {
@@ -688,6 +703,31 @@ mod tests {
     use super::*;
 
     const PHRASE: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+
+    #[test]
+    fn view_key_scopes_are_explicit_and_legacy_clients_keep_the_full_key() {
+        let account = Account::from_seed(&[0; 32], Profile::TESTNET.network, 0).unwrap();
+        let incoming: Value = serde_json::from_str(&view_key(&json!({
+            "phrase": PHRASE, "view_key_kind": "incoming"
+        }).to_string()).unwrap()).unwrap();
+        assert_eq!(incoming["kind"], "incoming");
+        assert_eq!(incoming["view_key"], account.incoming_view_key().unwrap().encode());
+        assert!(incoming["view_key"].as_str().unwrap().starts_with("zqtestviewin2"));
+
+        let full: Value = serde_json::from_str(&view_key(&json!({
+            "phrase": PHRASE, "view_key_kind": "full"
+        }).to_string()).unwrap()).unwrap();
+        let legacy: Value = serde_json::from_str(&view_key(&json!({
+            "phrase": PHRASE
+        }).to_string()).unwrap()).unwrap();
+        assert_eq!(full, legacy);
+        assert_eq!(full["kind"], "full");
+        assert_eq!(full["view_key"], account.view_key().unwrap().encode());
+        assert_ne!(incoming["view_key"], full["view_key"]);
+        // Un alcance desconocido no se convierte silenciosamente en el completo.
+        assert!(view_key(&json!({"phrase": PHRASE, "view_key_kind": "unknown"}).to_string()).is_err());
+        assert!(view_key(&json!({"phrase": PHRASE, "view_key_kind": true}).to_string()).is_err());
+    }
 
     #[test]
     fn the_phrase_gives_the_zsilent_wallet() {
