@@ -234,6 +234,25 @@ class WalletViewModel @Inject constructor(
     } catch (cancelled: CancellationException) { throw cancelled
     } catch (e: Exception) { Result.failure(e) }
 
+    // Más direcciones de la misma frase (punto 4 de la revisión del 10/11).
+    suspend fun extraAddresses(): Result<List<Pair<Int, String>>> = try {
+        Result.success(wallet.extraAddresses())
+    } catch (cancelled: CancellationException) { throw cancelled
+    } catch (e: Exception) { Result.failure(e) }
+
+    /** Crea una y la publica; el `Boolean` dice si la red ya la tiene. */
+    suspend fun addAddress(): Result<Pair<Pair<Int, String>, Boolean>> = try {
+        val added = wallet.addAddress()
+        val published = runCatching { wallet.publishExtra(added.first) }.getOrDefault(false)
+        Result.success(added to published)
+    } catch (cancelled: CancellationException) { throw cancelled
+    } catch (e: Exception) { Result.failure(e) }
+
+    suspend fun publishExtra(index: Int): Result<Boolean> = try {
+        Result.success(wallet.publishExtra(index))
+    } catch (cancelled: CancellationException) { throw cancelled
+    } catch (e: Exception) { Result.failure(e) }
+
     // ── Enviar ───────────────────────────────────────────────────────────────
 
     fun checkAddress(text: String): JSONObject = wallet.checkAddress(text)

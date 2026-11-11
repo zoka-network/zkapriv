@@ -140,24 +140,24 @@ object ZokaStark {
         return if (reply.isNull("address")) null else reply.getString("address")
     }
 
-    /** Publica la dirección propia para que su forma corta sirva. */
-    fun publish(phrase: String, torProxy: String?, stateDir: String? = null): Boolean =
-        call(base(phrase, stateDir, torProxy), ::publish0).getBoolean("published")
+    /** Publica una dirección propia (`index`, 0 la principal) para que su forma corta sirva. */
+    fun publish(phrase: String, torProxy: String?, stateDir: String? = null, index: Int = 0): Boolean =
+        call(base(phrase, stateDir, torProxy).put("index", index), ::publish0).getBoolean("published")
 
     /**
      * Las direcciones de la billetera (`index`, `address`, `short`), la
      * principal primero.
      */
-    fun addresses(phrase: String, stateDir: String): JSONObject =
-        call(base(phrase, stateDir), ::addresses0)
+    fun addresses(phrase: String, stateDir: String, birth: Int? = null): JSONObject =
+        call(base(phrase, stateDir).apply { birth?.let { put("birth", it) } }, ::addresses0)
 
     /**
      * Una dirección más para dar a otra persona: quienes pagan a dos
      * direcciones no pueden saber que pagaron a la misma billetera. Hasta ocho.
      * Hay que crearla antes de darla: lee los pagos desde el próximo bloque.
      */
-    fun addAddress(phrase: String, stateDir: String): JSONObject =
-        call(base(phrase, stateDir), ::addAddress0)
+    fun addAddress(phrase: String, stateDir: String, birth: Int? = null): JSONObject =
+        call(base(phrase, stateDir).apply { birth?.let { put("birth", it) } }, ::addAddress0)
 
     /** 0: espera, 1: conexión, 2: prueba local, 3: envío a la red. Sin secretos. */
     fun sendPhase(): Int = sendPhase0()

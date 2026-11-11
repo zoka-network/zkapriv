@@ -101,6 +101,7 @@ fun ReceiveScreen(vm: WalletViewModel, onBack: (() -> Unit)? = null) {
                 ) { ZButtonText(if (publishing) "Publishing…" else if (published) "Address published" else "Publish address") }
                 publishError?.let { Notice(it, tone = ZkTone.Err) }
             }
+            MoreAddresses(vm)
         } else {
             Panel {
                 AnimatedMultiPartQr(full)
@@ -144,3 +145,67 @@ private fun AnimatedMultiPartQr(text: String) {
         }
     }
 }
+
+/**
+ * Más direcciones de la misma frase (punto 4 de la revisión del 10/11): otra
+ * para cada persona que paga, y no saben que es la misma billetera.
+ */
+@Composable
+private fun MoreAddresses(vm: WalletViewModel) {
+    val scope = rememberCoroutineScope()
+    var extra by remember { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
+    var published by remember { mutableStateOf(setOf<Int>()) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var shown by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(Unit) { vm.extraAddresses().onSuccess { extra = it } }
+    Panel(title = "More addresses", right = { Pill("${extra.size} of $MAX_EXTRA") }) {
+        Text(
+            "A different address for each person who pays you: they cannot tell it is the same wallet.",
+            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+            color = Zk.colors.textMuted,
+        )
+        extra.forEach { (index, short) ->
+            CopyableKeyValueRow("Address $index", short)
+            if (shown == index) ZkQrCode(short, Modifier.align(Alignment.CenterHorizontally))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ZButton(
+                    { shown = if (shown == index) null else index },
+                    Modifier.weight(1f),
+                    size = ZButtonSize.Small,
+                ) { ZButtonText(if (shown == index) "Hide QR" else "QR") }
+                if (index !in published) {
+                    ZButton(
+                        { scope.launch { vm.publishExtra(index).onSuccess { if (it) published = published + index } } },
+                        Modifier.weight(1f),
+                        size = ZButtonSize.Small,
+                    ) { ZButtonText("Publish") }
+                }
+            }
+        }
+        ZButton(
+            onClick = {
+                busy = true
+                error = null
+                scope.launch {
+                    vm.addAddress()
+                        .onSuccess { (added, isPublished) ->
+                            extra = extra + added
+                            if (isPublished) published = published + added.first
+                            shown = added.first
+                        }
+                        .onFailure { error = "Could not add an address. Try again." }
+                    busy = false
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            variant = ZButtonVariant.Accent,
+            enabled = !busy && extra.size < MAX_EXTRA,
+        ) { ZButtonText(if (busy) "Adding…" else "New address") }
+        HintText("Create it before giving it out.")
+        error?.let { Notice(it, tone = ZkTone.Err) }
+    }
+}
+
+/** Además de la principal: el motor admite ocho por billetera. */
+private const val MAX_EXTRA = 7

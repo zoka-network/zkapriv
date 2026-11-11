@@ -355,6 +355,35 @@ class QuanticWallet @Inject constructor(
         ZokaStark.resolve(short, route(), vault.stateDir)
     }
 
+    /**
+     * Las otras direcciones de la billetera, sin la principal (punto 4 de la
+     * revisión del 10/11): número y dirección corta.
+     */
+    suspend fun extraAddresses(): List<Pair<Int, String>> = withContext(Dispatchers.IO) {
+        busy.withLock {
+            val list = ZokaStark.addresses(phrase(), vault.stateDir, vault.birth()).getJSONArray("addresses")
+            (0 until list.length()).map { list.getJSONObject(it) }
+                .filter { it.getInt("index") > 0 }
+                .map { it.getInt("index") to it.getString("short") }
+        }
+    }
+
+    /**
+     * Una dirección más, hasta ocho. Los pagos a ella se encuentran desde el
+     * próximo bloque: se crea antes de darla. Devuelve su número y su corta.
+     */
+    suspend fun addAddress(): Pair<Int, String> = withContext(Dispatchers.IO) {
+        busy.withLock {
+            val reply = ZokaStark.addAddress(phrase(), vault.stateDir, vault.birth())
+            reply.getInt("index") to reply.getString("short")
+        }
+    }
+
+    /** Publica la dirección número `index` para que su corta sirva. */
+    suspend fun publishExtra(index: Int): Boolean = withContext(Dispatchers.IO) {
+        publishing.withLock { ZokaStark.publish(phrase(), route(), vault.stateDir, index) }
+    }
+
     suspend fun publishAddress(): Boolean = withContext(Dispatchers.IO) {
         publishing.withLock {
             // El id al empezar: si en el medio se cambia de billetera, se

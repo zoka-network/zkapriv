@@ -132,6 +132,9 @@ struct Request {
     checkpoint: Option<Value>,
     #[serde(default)]
     view_key_kind: ViewKeyKind,
+    /// Cuál de las direcciones de la billetera (0, la principal, si no viene).
+    #[serde(default)]
+    index: u32,
 }
 
 fn default_network() -> String {
@@ -698,7 +701,11 @@ fn resolve(json: &str) -> Result<String, String> {
 fn publish(json: &str) -> Result<String, String> {
     let request = Request::parse(json)?;
     let profile = request.profile()?;
-    let (account, _) = request.account()?;
+    let (_, seed) = request.account()?;
+    if request.index >= zoka::quantic::stark::protocol::light::MAX_ADDRESSES {
+        return Err("una billetera tiene hasta ocho direcciones".into());
+    }
+    let account = Account::from_seed(&seed, profile.network, request.index).map_err(err)?;
     let seeds = stark_mobile::builtin_seeds(profile)?;
     let peers_path = peers_path(&request)?;
     let mut peers = load_peers(peers_path.as_deref(), profile);
