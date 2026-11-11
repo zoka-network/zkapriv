@@ -214,7 +214,11 @@ fn load(path: &Path, seed: &[u8; 32], profile: Profile, birth: u32) -> Result<Li
             .decrypt(Nonce::from_slice(&body[..12]), &body[12..])
             .map_err(|_| "el estado guardado es de otra billetera o esta dañado")?,
     );
-    let wallet = LightWallet::decode(&plain).map_err(err)?;
+    // Descifra pero no se lee: lo guardó otra versión (el byte de formato de
+    // la billetera liviana). Es un caché de la cadena: se vuelve a leer.
+    let Ok(wallet) = LightWallet::decode(&plain) else {
+        return LightWallet::new(profile.network, birth.max(1)).map_err(err);
+    };
     if wallet.network() != profile.network {
         return Err("el estado guardado es de otra red".into());
     }
@@ -402,14 +406,65 @@ fn wallet_status(json: &str) -> Result<String, String> {
     Ok(status_with_peers(&wallet, &request)?.to_string())
 }
 
+/// Las direcciones que lee la billetera: las cuentas `0..` de la semilla, en
+/// orden. La 0 es la principal (y la del vuelto).
+fn accounts(seed: &[u8; 32], profile: Profile, wallet: &LightWallet) -> Result<Vec<Account>, String> {
+    (0..wallet.addresses())
+        .map(|index| Account::from_seed(seed, profile.network, index).map_err(err))
+        .collect()
+}
+
+fn address_json(index: u32, account: &Account) -> Result<Value, String> {
+    let address = account.address();
+    Ok(json!({
+        "index": index,
+        "address": address.encode().map_err(err)?,
+        "short": address.short().map_err(err)?,
+    }))
+}
+
+/// Las direcciones de la billetera, la principal primero.
+fn addresses(json: &str) -> Result<String, String> {
+    let request = Request::parse(json)?;
+    let profile = request.profile()?;
+    let _lock = state_lock();
+    let (_, seed) = request.account()?;
+    let wallet = load(&request.state_path()?, &seed, profile, request.birth.unwrap_or(1))?;
+    let list = accounts(&seed, profile, &wallet)?
+        .iter()
+        .enumerate()
+        .map(|(index, account)| address_json(index as u32, account))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(json!({ "addresses": list }).to_string())
+}
+
+/// Una dirección más para dar a otra persona: quienes pagan a dos direcciones
+/// no pueden saber que pagaron a la misma billetera. Hasta ocho; cada una es
+/// un descifrado más por salida leída. Lee los pagos a la nueva desde el
+/// próximo bloque: hay que crearla antes de darla.
+fn add_address(json: &str) -> Result<String, String> {
+    let request = Request::parse(json)?;
+    let profile = request.profile()?;
+    let _lock = state_lock();
+    let (_, seed) = request.account()?;
+    let path = request.state_path()?;
+    let mut wallet = load(&path, &seed, profile, request.birth.unwrap_or(1))?;
+    let index = wallet.addresses();
+    let account = Account::from_seed(&seed, profile.network, index).map_err(err)?;
+    wallet.set_addresses(index + 1).map_err(err)?;
+    save(&path, &seed, &wallet)?;
+    Ok(address_json(index, &account)?.to_string())
+}
+
 /// Páginas que la app trajo por HTTPS, en orden desde `next`.
 fn add_pages(json: &str) -> Result<String, String> {
     let request = Request::parse(json)?;
     let profile = request.profile()?;
     let _lock = state_lock();
-    let (account, seed) = request.account()?;
+    let (_, seed) = request.account()?;
     let path = request.state_path()?;
     let mut wallet = load(&path, &seed, profile, request.birth.unwrap_or(1))?;
+    let accounts = accounts(&seed, profile, &wallet)?;
     for page in &request.pages_hex {
         let bytes = hex::decode(page).map_err(|_| "pagina en hex invalida")?;
         let page = ScanPage2::decode(&bytes).map_err(err)?;
@@ -417,7 +472,7 @@ fn add_pages(json: &str) -> Result<String, String> {
             // Un cambio de rama hizo volver a la billetera: lo que sigue ya no encaja.
             break;
         }
-        wallet.add_page(&account, &page).map_err(err)?;
+        wallet.add_page_for(&accounts, &page).map_err(err)?;
     }
     save(&path, &seed, &wallet)?;
     Ok(status_with_peers(&wallet, &request)?.to_string())
@@ -431,9 +486,10 @@ fn sync(json: &str) -> Result<String, String> {
     let profile = request.profile()?;
     let route = request.route()?;
     let _lock = state_lock();
-    let (account, seed) = request.account()?;
+    let (_, seed) = request.account()?;
     let path = request.state_path()?;
     let mut wallet = load(&path, &seed, profile, request.birth.unwrap_or(1))?;
+    let accounts = accounts(&seed, profile, &wallet)?;
     let seeds = stark_mobile::builtin_seeds(profile)?;
     let peers_path = peers_path(&request)?;
     let mut peers = load_peers(peers_path.as_deref(), profile);
@@ -443,7 +499,7 @@ fn sync(json: &str) -> Result<String, String> {
         for _ in 0..PAGES_PER_CALL {
             let page = stark_mobile::page(&mut client, wallet.next()).await?;
             let empty = page.blocks.is_empty();
-            wallet.add_page(&account, &page).map_err(err)?;
+            wallet.add_page_for(&accounts, &page).map_err(err)?;
             if empty || wallet.in_sync() {
                 break;
             }
@@ -547,7 +603,7 @@ fn send(json: &str) -> Result<String, String> {
     let _lock = state_lock();
     let _sending = Sending;
     SEND_PHASE.store(1, Ordering::Relaxed);
-    let (account, seed) = request.account()?;
+    let (_, seed) = request.account()?;
     let path = request.state_path()?;
     let mut wallet = load(&path, &seed, profile, 1)?;
     let seeds = stark_mobile::builtin_seeds(profile)?;
@@ -562,7 +618,8 @@ fn send(json: &str) -> Result<String, String> {
     });
     save_peers(peers_path.as_deref(), &peers);
     let to = to?;
-    let plan = wallet.plan(&account, to, amount, memo.as_bytes()).map_err(err)?;
+    let accounts = accounts(&seed, profile, &wallet)?;
+    let plan = wallet.plan_for(&accounts, to, amount, memo.as_bytes()).map_err(err)?;
     let fee = plan.fee;
     let expiry = plan.expiry;
     configure_mobile_prover_runtime();
@@ -571,7 +628,7 @@ fn send(json: &str) -> Result<String, String> {
     let tx = std::thread::Builder::new()
         .name("zoka-stark-prover".into())
         .stack_size(PROVER_STACK)
-        .spawn(move || plan.prove(&account))
+        .spawn(move || plan.prove_for(&accounts))
         .map_err(err)?
         .join()
         .map_err(|_| "la prueba entro en panico")?
@@ -687,6 +744,8 @@ jni_json!(Java_com_zoka_zkapriv_network_nativebridge_ZokaStark_confirmCheckpoint
 jni_json!(Java_com_zoka_zkapriv_network_nativebridge_ZokaStark_send0, "el envio entro en panico", send);
 jni_json!(Java_com_zoka_zkapriv_network_nativebridge_ZokaStark_resolve0, "la direccion corta entro en panico", resolve);
 jni_json!(Java_com_zoka_zkapriv_network_nativebridge_ZokaStark_publish0, "publicar la direccion entro en panico", publish);
+jni_json!(Java_com_zoka_zkapriv_network_nativebridge_ZokaStark_addresses0, "las direcciones entraron en panico", addresses);
+jni_json!(Java_com_zoka_zkapriv_network_nativebridge_ZokaStark_addAddress0, "la direccion nueva entro en panico", add_address);
 
 /// `{"phrase": "..."}`: 24 palabras nuevas, de la entropía del sistema.
 #[no_mangle]
@@ -763,6 +822,32 @@ mod tests {
         assert_eq!(load(&dir.join("old.bin"), &[1; 32], Profile::TESTNET, 1).unwrap().height(), 0);
         fs::write(dir.join("junk.bin"), b"not a wallet state at all").unwrap();
         assert!(load(&dir.join("junk.bin"), &[1; 32], Profile::TESTNET, 1).is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Una dirección más de la misma frase, guardada en el estado: la lista
+    /// la trae después de la principal, y no pasan de ocho.
+    #[test]
+    fn a_second_address_is_kept_in_the_state() {
+        let dir = std::env::temp_dir().join(format!("zkapriv-addresses-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let request = json!({"phrase": PHRASE, "network": "testnet", "state_dir": dir.to_str().unwrap()})
+            .to_string();
+        let first: Value = serde_json::from_str(&addresses(&request).unwrap()).unwrap();
+        assert_eq!(first["addresses"].as_array().unwrap().len(), 1);
+        let added: Value = serde_json::from_str(&add_address(&request).unwrap()).unwrap();
+        assert_eq!(added["index"], 1);
+        let both: Value = serde_json::from_str(&addresses(&request).unwrap()).unwrap();
+        let list = both["addresses"].as_array().unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0], first["addresses"][0]);
+        assert_eq!(list[1]["address"], added["address"]);
+        assert_ne!(list[0]["address"], list[1]["address"]);
+        for _ in 2..zoka::quantic::stark::protocol::light::MAX_ADDRESSES {
+            add_address(&request).unwrap();
+        }
+        assert!(add_address(&request).is_err());
         let _ = fs::remove_dir_all(dir);
     }
 }

@@ -144,6 +144,21 @@ object ZokaStark {
     fun publish(phrase: String, torProxy: String?, stateDir: String? = null): Boolean =
         call(base(phrase, stateDir, torProxy), ::publish0).getBoolean("published")
 
+    /**
+     * Las direcciones de la billetera (`index`, `address`, `short`), la
+     * principal primero.
+     */
+    fun addresses(phrase: String, stateDir: String): JSONObject =
+        call(base(phrase, stateDir), ::addresses0)
+
+    /**
+     * Una dirección más para dar a otra persona: quienes pagan a dos
+     * direcciones no pueden saber que pagaron a la misma billetera. Hasta ocho.
+     * Hay que crearla antes de darla: lee los pagos desde el próximo bloque.
+     */
+    fun addAddress(phrase: String, stateDir: String): JSONObject =
+        call(base(phrase, stateDir), ::addAddress0)
+
     /** 0: espera, 1: conexión, 2: prueba local, 3: envío a la red. Sin secretos. */
     fun sendPhase(): Int = sendPhase0()
 
@@ -160,4 +175,6 @@ object ZokaStark {
     @JvmStatic private external fun send0(request: String): String
     @JvmStatic private external fun resolve0(request: String): String
     @JvmStatic private external fun publish0(request: String): String
+    @JvmStatic private external fun addresses0(request: String): String
+    @JvmStatic private external fun addAddress0(request: String): String
 }
