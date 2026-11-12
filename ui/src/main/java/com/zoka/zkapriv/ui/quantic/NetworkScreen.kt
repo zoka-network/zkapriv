@@ -36,7 +36,7 @@ internal fun NetworkContent(state: QuanticState, tor: Boolean, onBack: () -> Uni
     ZkScreen(title = "Network", onBack = onBack) {
         NetworkCard(state)
         Panel(title = "Your wallet") {
-            KeyValueRow("Network", "Zoka Quantic Testnet v2")
+            KeyValueRow("Network", "Zoka Quantic Testnet v3")
             KeyValueRow("Blocks read", if (state.tip > 0) "%,d / %,d".format(state.height, state.tip) else "—")
             KeyValueRow(
                 "Verified through",

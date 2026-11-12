@@ -69,7 +69,7 @@ fun WelcomeScreen(onCreate: () -> Unit, onRestore: () -> Unit) {
         },
     ) {
         VSpace(56)
-        Eyebrow("ZKAPriv · Testnet v2")
+        Eyebrow("ZKAPriv · Testnet v3")
         QuanticWordmark(Zk.text.brandHero)
         Text("Private by design.", style = Zk.text.brandTagline, color = Zk.colors.textMuted)
         VSpace(8)

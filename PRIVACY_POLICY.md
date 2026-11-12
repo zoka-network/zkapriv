@@ -1,6 +1,6 @@
-# Privacidad de ZKAPriv 3
+# Privacidad de ZKAPriv 4
 
-Actualizada el 3 de noviembre de 2026. Zoka Quantic **testnet v2**.
+Actualizada el 12 de noviembre de 2026. Zoka Quantic **testnet v3**.
 
 ZKAPriv es autocustodiada: vos guardás las 24 palabras que permiten recuperar
 y gastar tus monedas. La app no manda la frase, las claves de gasto ni el

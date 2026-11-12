@@ -1,6 +1,6 @@
-# ZKAPriv 3 privacy
+# ZKAPriv 4 privacy
 
-Updated November 3, 2026. Zoka Quantic **testnet v2**, whose coins have no value.
+Updated November 12, 2026. Zoka Quantic **testnet v3**, whose coins have no value.
 
 ZKAPriv is self-custodial. Recovery phrases, spending keys and proof witnesses
 are not sent to servers. STARK proofs are generated on the phone. Android
