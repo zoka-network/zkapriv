@@ -1,6 +1,7 @@
 package com.zoka.zkapriv.ui.components
 
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.animation.AnimatedContent
@@ -988,10 +989,16 @@ fun ZSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     val animate = Zk.animations
     val shown = remember { MutableTransitionState(!animate).apply { targetState = true } }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
         Box(
             Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding()
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -1015,8 +1022,6 @@ fun ZSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
                             indication = null,
                             onClick = {},
                         )
-                        .navigationBarsPadding()
-                        .imePadding()
                         .verticalScroll(rememberScrollState())
                         .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 20.dp),
                     verticalArrangement = Arrangement.spacedBy(Zk.spacing.gap),

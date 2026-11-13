@@ -9,7 +9,7 @@ PIN compartido, Reset unificado y ajustes en grupos. Se conserva la red v3
 y la navegación de cinco pestañas.
 
 Versión 4.1.0, código 20, variante **ZKAPriv Testnet** instalada en el
-Samsung SM-A135M. Pasan 75 pruebas JVM y 5 instrumentadas; la revisión usa
+Samsung SM-A135M. Pasan 75 pruebas JVM y 6 instrumentadas; la revisión usa
 datos ficticios. Plan y evidencia en [PLAN-REDISENO-4.1.md](docs/PLAN-REDISENO-4.1.md)
 y [VALIDACION-4.1.0.md](docs/VALIDACION-4.1.0.md).
 No se integra a `main` ni se publica: sigue vigente la release 4.0.0.

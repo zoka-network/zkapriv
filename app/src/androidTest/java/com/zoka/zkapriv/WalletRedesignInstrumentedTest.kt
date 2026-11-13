@@ -1,6 +1,7 @@
 package com.zoka.zkapriv
 
 import android.content.Intent
+import android.os.SystemClock
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -65,5 +66,13 @@ class WalletRedesignInstrumentedTest {
         compose.onNodeWithText("24 of 24").assertExists()
         compose.onNodeWithText("RESTORE WALLET").assertIsEnabled().performClick()
         compose.onNodeWithText("Choose a 6-digit PIN").assertIsDisplayed()
+    }
+
+    @Test fun keyboardDoesNotCoverWalletActions() = preview("wallet-edit") {
+        compose.onAllNodes(hasSetTextAction())[0].performClick()
+        // El teclado es una ventana del sistema y no usa el reloj de Compose.
+        SystemClock.sleep(1000)
+        compose.onNodeWithText("SAVE").assertIsDisplayed().performClick()
+        compose.onNodeWithText("PRIVATE BALANCE").assertIsDisplayed()
     }
 }

@@ -34,13 +34,19 @@ Con JDK 17, `--no-daemon --max-workers=2`:
 ```
 
 Pasada final: **28 pruebas de UI y 47 de red**, sin fallas. Compilaron
-ambos APK (`build-final.log`, 2 min 42 s). **Las cinco pruebas instrumentadas
-pasaron en el Samsung**, 23,506 s, sin fallas (`instrumented.log`).
+ambos APK (`build-keyboard.log`, 2 min 27 s). **Las seis pruebas instrumentadas
+pasaron en el Samsung**, 28,573 s, sin fallas (`instrumented-final.log`).
 Se revisaron 22 pantallas en claro y oscuro, con 44 capturas; Receive y el
-diálogo de edición se vuelven a capturar con el último ajuste.
+diálogo de edición se volvieron a capturar con el último ajuste. Se incluye
+una captura adicional de edición con teclado abierto.
+
+La revisión final encontró que Android desplazaba el diálogo al abrir el
+teclado y tapaba sus botones. Se corrigió pasando los insets al contenedor
+de la hoja y usando `decorFitsSystemWindows = false`; la sexta prueba abre
+el teclado y guarda el nombre ficticio con el botón Save.
 
 APK final de prueba: `ZKAPriv-4.1.0-testnet-debug.apk`, SHA-256
-`9470ce186f253ef9a901b4a56463ffe2b6a00ec581c96e773900c77dcb6601fe`.
+`3a2d17f945188465301999d5b1c34acc7bea076c2fe3ad84bc11fed9fbc5bbe3`.
 
 Dispositivo: Samsung SM-A135M, Android de 32 bits, 360 dp, letra al 110 %.
 Instalación con `adb install -r`, paquete `com.zoka.zkapriv.benchmark`, nombre
@@ -48,8 +54,9 @@ visible **ZKAPriv Testnet**. La app `com.zoka.zkapriv` conserva su instalación.
 
 `WalletRedesignInstrumentedTest` abre exclusivamente `wallet-preview` con
 datos ficticios. Comprueba Reset con y sin envío, el acceso desde Lock,
-el selector con ocho direcciones y la distribución de una frase pública de
-prueba en las 24 casillas. No abre el almacén, no consulta el portapapeles y
+el selector con ocho direcciones, la distribución de una frase pública de
+prueba en las 24 casillas y guardar desde el diálogo con el teclado abierto.
+No abre el almacén, no consulta el portapapeles y
 no hace pagos ni borra billeteras reales.
 
 Los dos motores incluidos coinciden por SHA-256 con `native/jniLibs`:
