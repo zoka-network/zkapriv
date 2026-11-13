@@ -125,6 +125,7 @@ class QuanticVault @Inject constructor(
             .remove(key(KEY_PHRASE, id))
             .remove(key(KEY_BIRTH, id))
             .remove(key(KEY_PUBLISHED, id))
+            .apply { (1..MAX_EXTRA_ADDRESSES).forEach { remove(extraKey(id, it)) } }
             .remove("$KEY_NAME.$id")
             .putString(KEY_WALLETS, rest.joinToString(","))
             .apply { if (activeId() == id) putString(KEY_ACTIVE, rest.first()) }
@@ -150,6 +151,7 @@ class QuanticVault @Inject constructor(
             .putInt(KEY_BIRTH, birth)
             .putBoolean(KEY_READY, false)
             .putBoolean(KEY_PUBLISHED, false)
+            .apply { (1..MAX_EXTRA_ADDRESSES).forEach { remove(extraKey(MAIN, it)) } }
             .putString(KEY_WALLETS, MAIN)
             .putString(KEY_ACTIVE, MAIN)
             .apply()
@@ -233,6 +235,21 @@ class QuanticVault @Inject constructor(
         prefs.edit().putBoolean(key(KEY_PUBLISHED, id), value).apply()
     }
 
+    /**
+     * Lo mismo para cada dirección de la billetera: `index` 0 es la principal
+     * y 1 a [MAX_EXTRA_ADDRESSES] las otras. Sin esta marca la app volvía a
+     * ofrecer «Publish» cada vez que se abría Receive.
+     */
+    fun isPublished(id: String, index: Int): Boolean =
+        if (index == 0) isPublished(id) else prefs.getBoolean(extraKey(id, index), false)
+
+    fun setPublished(id: String, index: Int, value: Boolean) {
+        if (index == 0) setPublished(id, value)
+        else prefs.edit().putBoolean(extraKey(id, index), value).apply()
+    }
+
+    private fun extraKey(id: String, index: Int) = "${key(KEY_PUBLISHED, id)}#$index"
+
     /** Borra todas las billeteras v3 de este teléfono: frases, PIN y estado. */
     fun wipe() {
         val dirs = ids().map(::stateDirOf)
@@ -282,5 +299,7 @@ class QuanticVault @Inject constructor(
         private const val KEY_NAME = "name"
         const val MAIN = "main"
         const val MAX_NAME = 24
+        /** Además de la principal: el motor admite ocho direcciones por billetera. */
+        const val MAX_EXTRA_ADDRESSES = 7
     }
 }

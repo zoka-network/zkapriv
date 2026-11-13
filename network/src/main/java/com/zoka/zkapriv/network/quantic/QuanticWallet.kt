@@ -37,6 +37,17 @@ data class QuanticMovement(
     val confirmations: Int,
 )
 
+/**
+ * Una dirección de la billetera: la principal (`index` 0) o una de las otras
+ * (1 a 7). `published` dice si una semilla ya aceptó su forma corta.
+ */
+data class WalletAddress(
+    val index: Int,
+    val short: String,
+    val full: String,
+    val published: Boolean,
+)
+
 data class QuanticState(
     /** Hay billetera guardada y se leyó su estado al menos una vez. */
     val loaded: Boolean = false,
@@ -356,32 +367,45 @@ class QuanticWallet @Inject constructor(
     }
 
     /**
-     * Las otras direcciones de la billetera, sin la principal (punto 4 de la
-     * revisión del 10/11): número y dirección corta.
+     * Todas las direcciones de la billetera, la principal primero (punto 4 de
+     * la revisión del 10/11), con la marca de si la red ya conoce su corta.
      */
-    suspend fun extraAddresses(): List<Pair<Int, String>> = withContext(Dispatchers.IO) {
+    suspend fun addresses(): List<WalletAddress> = withContext(Dispatchers.IO) {
         busy.withLock {
+            val id = vault.activeId()
             val list = ZokaStark.addresses(phrase(), vault.stateDir, vault.birth()).getJSONArray("addresses")
-            (0 until list.length()).map { list.getJSONObject(it) }
-                .filter { it.getInt("index") > 0 }
-                .map { it.getInt("index") to it.getString("short") }
+            (0 until list.length()).map { list.getJSONObject(it).toAddress(id) }
         }
     }
 
     /**
      * Una dirección más, hasta ocho. Los pagos a ella se encuentran desde el
-     * próximo bloque: se crea antes de darla. Devuelve su número y su corta.
+     * próximo bloque: se crea antes de darla.
      */
-    suspend fun addAddress(): Pair<Int, String> = withContext(Dispatchers.IO) {
+    suspend fun addAddress(): WalletAddress = withContext(Dispatchers.IO) {
         busy.withLock {
-            val reply = ZokaStark.addAddress(phrase(), vault.stateDir, vault.birth())
-            reply.getInt("index") to reply.getString("short")
+            val id = vault.activeId()
+            ZokaStark.addAddress(phrase(), vault.stateDir, vault.birth()).toAddress(id)
         }
     }
 
-    /** Publica la dirección número `index` para que su corta sirva. */
+    private fun JSONObject.toAddress(walletId: String): WalletAddress {
+        val index = getInt("index")
+        return WalletAddress(index, getString("short"), getString("address"), vault.isPublished(walletId, index))
+    }
+
+    /**
+     * Publica la dirección número `index` (1 en adelante) para que su corta
+     * sirva, y lo recuerda: no hay que volver a publicarla.
+     */
     suspend fun publishExtra(index: Int): Boolean = withContext(Dispatchers.IO) {
-        publishing.withLock { ZokaStark.publish(phrase(), route(), vault.stateDir, index) }
+        publishing.withLock {
+            // El id al empezar, como en [publishAddress].
+            val id = vault.activeId()
+            val accepted = ZokaStark.publish(phrase(), route(), vault.stateDir, index)
+            if (accepted) vault.setPublished(id, index, true)
+            accepted
+        }
     }
 
     suspend fun publishAddress(): Boolean = withContext(Dispatchers.IO) {

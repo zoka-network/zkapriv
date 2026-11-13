@@ -32,11 +32,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -58,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -67,6 +70,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -79,6 +83,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.common.BitMatrix
@@ -650,7 +656,13 @@ fun Segmented(
 
 /** Copiar con confirmación de 1,2 s. */
 @Composable
-fun CopyButton(value: String, modifier: Modifier = Modifier, label: String = "Copy") {
+fun CopyButton(
+    value: String,
+    modifier: Modifier = Modifier,
+    label: String = "Copy",
+    variant: ZButtonVariant = ZButtonVariant.Default,
+    size: ZButtonSize = ZButtonSize.Small,
+) {
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
     LaunchedEffect(copied) {
@@ -665,7 +677,8 @@ fun CopyButton(value: String, modifier: Modifier = Modifier, label: String = "Co
             copied = true
         },
         modifier = modifier,
-        size = ZButtonSize.Small,
+        variant = variant,
+        size = size,
         enabled = value.isNotBlank(),
     ) {
         Icon(
@@ -675,6 +688,84 @@ fun CopyButton(value: String, modifier: Modifier = Modifier, label: String = "Co
             modifier = Modifier.size(14.dp),
         )
         ZButtonText(if (copied) "Copied" else label)
+    }
+}
+
+/**
+ * Pastilla de un selector: una elegida entre varias, o una acción corta.
+ * `leading` va antes del texto (un ícono chico).
+ */
+@Composable
+fun ZChip(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    selected: Boolean = false,
+    enabled: Boolean = true,
+    /** `Role.Tab` si elige entre varias; `Role.Button` si es una acción. */
+    role: Role = Role.Tab,
+    leading: @Composable (() -> Unit)? = null,
+) {
+    val c = Zk.colors
+    val fg = if (selected) c.accent else c.textMuted
+    val border = animatedColor(if (selected) c.accent else c.borderStrong, "zk-chip-border")
+    Row(
+        modifier
+            .heightIn(min = 38.dp)
+            .alpha(if (enabled) 1f else 0.4f)
+            .background(if (selected) c.accent.copy(alpha = 0.20f) else c.surface2, CircleShape)
+            .border(BorderStroke(1.dp, border), CircleShape)
+            .clip(CircleShape)
+            .clickable(enabled = enabled, role = role, onClick = onClick)
+            .semantics { if (role == Role.Tab) this.selected = selected }
+            .padding(horizontal = 15.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CompositionLocalProvider(LocalContentColor provides fg) {
+            leading?.invoke()
+            Text(text, style = Zk.text.mono, color = fg, maxLines = 1, softWrap = false)
+        }
+    }
+}
+
+/**
+ * Hoja que sube desde abajo, para confirmar o elegir sin salir de la pantalla.
+ * Es un `Dialog`: hereda el bloqueo de capturas de la ventana.
+ */
+@Composable
+fun ZSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    val c = Zk.colors
+    val shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss,
+                ),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(c.elevated, shape)
+                    .border(BorderStroke(1.dp, c.borderStrong), shape)
+                    // Tocar la hoja no la cierra.
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {},
+                    )
+                    .navigationBarsPadding()
+                    .padding(horizontal = 20.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(Zk.spacing.gap),
+            ) {
+                CompositionLocalProvider(LocalContentColor provides c.text) { content() }
+            }
+        }
     }
 }
 

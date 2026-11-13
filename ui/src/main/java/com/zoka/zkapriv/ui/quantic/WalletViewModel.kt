@@ -7,6 +7,7 @@ import com.zoka.zkapriv.core.preferences.ThemeMode
 import com.zoka.zkapriv.network.quantic.QuanticState
 import com.zoka.zkapriv.network.quantic.QuanticWallet
 import com.zoka.zkapriv.network.quantic.ViewKeyScope
+import com.zoka.zkapriv.network.quantic.WalletAddress
 import com.zoka.zkapriv.security.vault.QuanticVault
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -106,9 +108,16 @@ class WalletViewModel @Inject constructor(
     private val _activeWallet = MutableStateFlow(wallet.activeWalletId())
     val activeWallet: StateFlow<String> = _activeWallet.asStateFlow()
 
+    private val _addresses = MutableStateFlow<List<WalletAddress>>(emptyList())
+    /** La principal y las otras de la billetera en uso. Vacía hasta leerlas. */
+    val addresses: StateFlow<List<WalletAddress>> = _addresses.asStateFlow()
+
     private fun refreshWallets() {
         _wallets.value = wallet.wallets()
-        _activeWallet.value = wallet.activeWalletId()
+        val active = wallet.activeWalletId()
+        // Las direcciones son de la billetera en uso: las de otra no se muestran.
+        if (active != _activeWallet.value) _addresses.value = emptyList()
+        _activeWallet.value = active
     }
 
     fun nextWalletName(): String = "Wallet ${_wallets.value.size + 1}"
@@ -199,18 +208,35 @@ class WalletViewModel @Inject constructor(
         }
         syncLoop.start()
         syncLoop.request()
-        if (publishJob?.isActive != true) publishJob = viewModelScope.launch { publishUntilKnown() }
+        if (publishJob?.isActive != true) publishJob = viewModelScope.launch { keepAddressesPublished() }
     }
 
     /**
-     * Publica la dirección corta en una semilla. ZSilent paga a una corta solo
-     * si su nodo la tiene en el directorio; si no, la API responde 404.
+     * Lee las direcciones y publica la corta de cada una en una semilla, sin
+     * que el usuario toque nada. ZSilent paga a una corta solo si su nodo la
+     * tiene en el directorio; si no, la API responde 404. Reintenta cada 15 s
+     * hasta que la red las tenga todas.
      */
-    private suspend fun publishUntilKnown() {
-        while (currentCoroutineContext().isActive && !vault.addressPublished) {
-            val accepted = publishAddress().getOrNull() == true
-            if (!accepted) delay(15_000)
+    private suspend fun keepAddressesPublished() {
+        while (currentCoroutineContext().isActive) {
+            val list = try {
+                wallet.addresses()
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Exception) { null }
+            if (list != null) {
+                _addresses.value = list
+                for (address in list.filterNot { it.published }) {
+                    val accepted = if (address.index == 0) publishAddress() else publishExtra(address.index)
+                    if (accepted.getOrNull() == true) markPublished(address.index)
+                }
+                if (_addresses.value.all { it.published }) return
+            }
+            delay(15_000)
         }
+    }
+
+    private fun markPublished(index: Int) {
+        _addresses.update { list -> list.map { if (it.index == index) it.copy(published = true) else it } }
     }
 
     fun stopSync() {
@@ -234,21 +260,21 @@ class WalletViewModel @Inject constructor(
     } catch (cancelled: CancellationException) { throw cancelled
     } catch (e: Exception) { Result.failure(e) }
 
-    // Más direcciones de la misma frase (punto 4 de la revisión del 10/11).
-    suspend fun extraAddresses(): Result<List<Pair<Int, String>>> = try {
-        Result.success(wallet.extraAddresses())
-    } catch (cancelled: CancellationException) { throw cancelled
-    } catch (e: Exception) { Result.failure(e) }
-
-    /** Crea una y la publica; el `Boolean` dice si la red ya la tiene. */
-    suspend fun addAddress(): Result<Pair<Pair<Int, String>, Boolean>> = try {
+    /**
+     * Otra dirección de la misma frase (punto 4 de la revisión del 10/11). Se
+     * publica sola: la vuelta de [keepAddressesPublished] arranca de nuevo para
+     * no esperar los 15 s de un reintento en curso.
+     */
+    suspend fun addAddress(): Result<WalletAddress> = try {
         val added = wallet.addAddress()
-        val published = runCatching { wallet.publishExtra(added.first) }.getOrDefault(false)
-        Result.success(added to published)
+        _addresses.update { list -> if (list.any { it.index == added.index }) list else list + added }
+        publishJob?.cancel()
+        publishJob = viewModelScope.launch { keepAddressesPublished() }
+        Result.success(added)
     } catch (cancelled: CancellationException) { throw cancelled
     } catch (e: Exception) { Result.failure(e) }
 
-    suspend fun publishExtra(index: Int): Result<Boolean> = try {
+    private suspend fun publishExtra(index: Int): Result<Boolean> = try {
         Result.success(wallet.publishExtra(index))
     } catch (cancelled: CancellationException) { throw cancelled
     } catch (e: Exception) { Result.failure(e) }
@@ -310,6 +336,7 @@ class WalletViewModel @Inject constructor(
         stopSync()
         vault.wipe()
         wallet.forget()
+        _addresses.value = emptyList()
         refreshWallets()
     }
 
