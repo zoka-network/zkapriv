@@ -1,9 +1,15 @@
 package com.zoka.zkapriv.ui.quantic
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.runtime.withFrameNanos
 import android.content.Intent
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
@@ -30,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.zoka.zkapriv.network.quantic.WalletAddress
 import com.zoka.zkapriv.security.vault.QuanticVault
@@ -131,22 +138,26 @@ internal fun ReceiveContent(
             onSelect = onSelect,
             onNew = { askNew = true },
         )
-        Panel {
-            // El QR que sale se dibuja con su propio valor, no con el nuevo.
-            ZkAnimatedSwap(short to shown, Modifier.align(Alignment.CenterHorizontally)) { (isShort, value) ->
-                if (isShort) ZkQrCode(value) else AnimatedMultiPartQr(value)
+        Panel(contentPadding = PaddingValues(20.dp), gap = 14.dp, hero = true) {
+            BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                // En un teléfono angosto el QR se achica en vez de salirse.
+                val side = if (maxWidth < QR_SIDE) maxWidth else QR_SIDE
+                // El QR que sale se dibuja con su propio valor, no con el nuevo.
+                ZkAnimatedSwap(short to shown) { (isShort, value) ->
+                    if (isShort) ZkQrCode(value, boxSize = side) else AnimatedMultiPartQr(value, side)
+                }
             }
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 ZLabel(if (current.index == 0) "Main address" else "Address #${current.index}")
                 MonoText(middleTruncated(shown, head = 16, tail = 12))
             }
             AddressStatus(current.published, short)
             Segmented(listOf("Short", "Full"), which, { which = it }, Modifier.fillMaxWidth())
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             CopyButton(shown, Modifier.weight(1f), variant = ZButtonVariant.Primary, size = ZButtonSize.Large)
-            ZButton({ onShare(shown) }, Modifier.weight(1f), ZButtonVariant.Outline, ZButtonSize.Large) {
-                Icon(Icons.Outlined.Share, null, tint = LocalContentColor.current, modifier = Modifier.size(16.dp))
+            ZButton({ onShare(shown) }, Modifier.weight(1f), ZButtonVariant.Secondary, ZButtonSize.Large) {
+                Icon(Icons.Outlined.Share, null, tint = LocalContentColor.current, modifier = Modifier.size(15.dp))
                 ZButtonText("Share")
             }
         }
@@ -167,6 +178,7 @@ internal fun ReceiveContent(
 
 /** `Main · #1 · #2 … · New`: la fila se desliza si no entra. */
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun AddressChips(
     addresses: List<WalletAddress>,
     selected: Int,
@@ -176,8 +188,12 @@ private fun AddressChips(
     onNew: () -> Unit,
 ) {
     val scroll = rememberScrollState()
-    // La recién creada queda elegida y al final de la fila: se la trae a la vista.
-    LaunchedEffect(addresses.size) { scroll.scrollTo(scroll.maxValue) }
+    val selectedChip = remember { BringIntoViewRequester() }
+    // Siempre se ve la elegida, incluso al volver con varias direcciones.
+    LaunchedEffect(selected, addresses.size) {
+        withFrameNanos { }
+        selectedChip.bringIntoView()
+    }
     Row(
         Modifier.fillMaxWidth().horizontalScroll(scroll),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -188,6 +204,7 @@ private fun AddressChips(
                 text = if (address.index == 0) "Main" else "#${address.index}",
                 onClick = { onSelect(address.index) },
                 selected = address.index == selected,
+                modifier = if (address.index == selected) Modifier.bringIntoViewRequester(selectedChip) else Modifier,
             )
         }
         if (canAdd) {
@@ -207,9 +224,10 @@ private fun AddressChips(
 /** Si la red ya conoce la corta. La completa sirve siempre. */
 @Composable
 private fun AddressStatus(published: Boolean, short: Boolean) {
+    val activating = short && !published
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatusDot(on = short && !published)
+            StatusDot(pulsing = activating, color = if (activating) Zk.colors.warning else Zk.colors.accent)
             Text(
                 when {
                     !short -> "Works without the directory"
@@ -217,7 +235,7 @@ private fun AddressStatus(published: Boolean, short: Boolean) {
                     else -> "Activating…"
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = Zk.colors.text,
+                color = Zk.colors.textSoft,
             )
         }
         when {
@@ -254,9 +272,12 @@ private fun NewAddressSheet(extras: Int, onCreate: () -> Unit, onDismiss: () -> 
     }
 }
 
+/** Lado del QR cuando la pantalla lo permite. */
+private val QR_SIDE = 232.dp
+
 /** Las partes del QR en ciclo; sin animaciones, se pasan a mano. */
 @Composable
-private fun AnimatedMultiPartQr(text: String) {
+private fun AnimatedMultiPartQr(text: String, side: Dp) {
     val parts = remember(text) { MultiPartQr.split(text) }
     var index by remember(text) { mutableIntStateOf(0) }
     val animate = Zk.animations
@@ -267,11 +288,10 @@ private fun AnimatedMultiPartQr(text: String) {
         }
     }
     Column(
-        Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        ZkQrCode(parts[index])
+        ZkQrCode(parts[index], boxSize = side)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (!animate && parts.size > 1) {
                 ZButton({ index = (index + parts.size - 1) % parts.size }, size = ZButtonSize.Small) { ZButtonText("Previous") }

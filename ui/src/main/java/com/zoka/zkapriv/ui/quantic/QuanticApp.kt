@@ -28,7 +28,7 @@ import com.zoka.zkapriv.ui.theme.Zk
 import com.zoka.zkapriv.ui.theme.ZkEasing
 
 /**
- * ZKAPriv 3: toda la app sobre Zoka Quantic Testnet v2.
+ * ZKAPriv: toda la app sobre Zoka Quantic Testnet v3.
  *
  * `locked` lo maneja la actividad (se bloquea al salir y a los 5 minutos sin
  * uso); `onUnlocked` le avisa que el PIN o la huella fueron correctos.
@@ -136,7 +136,7 @@ fun QuanticApp(vm: WalletViewModel, locked: Boolean, onUnlocked: () -> Unit,
                     })
                 }
                 composable("pin") {
-                    PinSetupScreen(onBack = { nav.popBackStack() }, onPinSet = { pin ->
+                    PinSetupScreen(steps = 3, onBack = { nav.popBackStack() }, onPinSet = { pin ->
                         vm.setPin(pin)
                         nav.navigate("biometric")
                     })
@@ -158,8 +158,13 @@ fun QuanticApp(vm: WalletViewModel, locked: Boolean, onUnlocked: () -> Unit,
                             onUnlocked()
                             nav.navigate("home") { popUpTo(0) }
                         },
-                        onWiped = { nav.navigate("welcome") { popUpTo(0) } },
+                        onForgot = { nav.navigate("reset") { launchSingleTop = true } },
                     )
+                }
+                composable("reset") {
+                    ResetScreen(vm, onBack = { nav.popBackStack() }, onWiped = {
+                        nav.navigate("welcome") { popUpTo(0) }
+                    })
                 }
 
                 // ── Billetera ────────────────────────────────────────────────────────
@@ -263,7 +268,7 @@ fun QuanticApp(vm: WalletViewModel, locked: Boolean, onUnlocked: () -> Unit,
                         onNetwork = { nav.navigate("network") { launchSingleTop = true } },
                         onReveal = { nav.navigate("reveal/$it") },
                         onChangePin = { nav.navigate("changepin") },
-                        onWiped = { nav.navigate("welcome") { popUpTo(0) } },
+                        onReset = { nav.navigate("reset") { launchSingleTop = true } },
                     )
                 }
                 composable("reveal/{what}") { entry ->

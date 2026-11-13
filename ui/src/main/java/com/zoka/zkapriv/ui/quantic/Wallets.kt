@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,6 +34,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.zoka.zkapriv.security.vault.QuanticVault
+import com.zoka.zkapriv.ui.components.CheckBadge
+import com.zoka.zkapriv.ui.components.GlassIconButton
+import com.zoka.zkapriv.ui.components.IconSquare
+import com.zoka.zkapriv.ui.components.Panel
+import com.zoka.zkapriv.ui.components.ZSheet
 import com.zoka.zkapriv.ui.components.ErrorText
 import com.zoka.zkapriv.ui.components.HintText
 import com.zoka.zkapriv.ui.components.Notice
@@ -106,7 +112,7 @@ internal fun WalletsContent(
                 ZButton(onCreate, Modifier.fillMaxWidth(), ZButtonVariant.Primary, ZButtonSize.Large, enabled = !sending) {
                     ZButtonText("Create new wallet")
                 }
-                ZButton(onRestore, Modifier.fillMaxWidth(), ZButtonVariant.Outline, ZButtonSize.Large, enabled = !sending) {
+                ZButton(onRestore, Modifier.fillMaxWidth(), ZButtonVariant.Secondary, ZButtonSize.Large, enabled = !sending) {
                     ZButtonText("Restore with 24 words")
                 }
             }
@@ -115,7 +121,7 @@ internal fun WalletsContent(
         if (sending) {
             Notice("Wait until your payment finishes to change wallets.", tone = ZkTone.Warn)
         }
-        Column {
+        Panel(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp), gap = 0.dp) {
             wallets.forEachIndexed { i, entry ->
                 if (i > 0) ThinDivider()
                 WalletRow(
@@ -140,7 +146,6 @@ private fun WalletRow(
     onEdit: () -> Unit,
 ) {
     val c = Zk.colors
-    val box = RoundedCornerShape(12.dp)
     Row(
         Modifier
             .fillMaxWidth()
@@ -149,29 +154,19 @@ private fun WalletRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Box(
-            Modifier.size(44.dp).clip(box).background(c.surface2).border(1.dp, if (active) c.accent else c.border, box),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(Icons.Outlined.AccountBalanceWallet, null, tint = if (active) c.accent else c.textMuted, modifier = Modifier.size(22.dp))
-        }
+        IconSquare(Icons.Outlined.AccountBalanceWallet, active = active, size = 44.dp)
         Column(Modifier.weight(1f)) {
             Text(entry.name, style = MaterialTheme.typography.titleMedium, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(if (active) "In use" else "Tap to use", style = MaterialTheme.typography.bodySmall, color = if (active) c.accent else c.textMuted)
         }
-        if (active) {
-            Box(Modifier.size(22.dp).background(c.accent, CircleShape), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Check, null, tint = c.onAccent, modifier = Modifier.size(15.dp))
-            }
-        }
-        IconButton(onClick = onEdit) {
-            Icon(Icons.Outlined.Edit, "Rename or remove ${entry.name}", tint = c.textMuted)
-        }
+        if (active) CheckBadge()
+        GlassIconButton(Icons.Outlined.Edit, "Rename or remove ${entry.name}", onEdit, enabled = enabled)
+
     }
 }
 
 @Composable
-private fun EditWalletDialog(
+internal fun EditWalletDialog(
     entry: QuanticVault.WalletEntry,
     canRemove: Boolean,
     onRename: (String) -> Result<Unit>,
@@ -182,54 +177,40 @@ private fun EditWalletDialog(
     var confirmRemove by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-    AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        containerColor = Zk.colors.surface,
-        title = { Text(if (confirmRemove) "Remove ${entry.name}?" else "Edit wallet", color = Zk.colors.text) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    ZSheet(onDismiss = { if (!busy) onDismiss() }) {
+        Text(if (confirmRemove) "Remove ${entry.name}?" else "Edit wallet", style = MaterialTheme.typography.titleLarge, color = Zk.colors.text)
+        if (confirmRemove) {
+            Notice("It leaves this phone. Only its 24 words bring it back, with its funds.", tone = ZkTone.Err)
+        } else {
+            ZLabel("Name")
+            ZInput(name, { name = it.take(QuanticVault.MAX_NAME) }, Modifier.fillMaxWidth(), mono = false)
+        }
+        error?.let { ErrorText(it) }
+        ZButton(
+            {
                 if (confirmRemove) {
-                    Notice("It leaves this phone. Only its 24 words bring it back, with its funds.", tone = ZkTone.Err)
-                } else {
-                    ZLabel("Name")
-                    ZInput(name, { name = it.take(QuanticVault.MAX_NAME) }, Modifier.fillMaxWidth(), mono = false)
-                    if (canRemove) {
-                        ZButton({ confirmRemove = true }, Modifier.fillMaxWidth(), ZButtonVariant.Danger, ZButtonSize.Small) {
-                            ZButtonText("Remove from this phone")
-                        }
+                    busy = true
+                    onRemove { result ->
+                        busy = false
+                        result.onSuccess { onDismiss() }.onFailure { error = it.message ?: "Could not remove it" }
                     }
+                } else {
+                    onRename(name).onSuccess { onDismiss() }.onFailure { error = it.message ?: "Could not rename it" }
                 }
-                error?.let { ErrorText(it) }
+            },
+            Modifier.fillMaxWidth(),
+            if (confirmRemove) ZButtonVariant.Danger else ZButtonVariant.Primary,
+            enabled = !busy && (confirmRemove || name.isNotBlank()),
+        ) { ZButtonText(if (busy) "Removing…" else if (confirmRemove) "Remove" else "Save") }
+        if (canRemove && !confirmRemove) {
+            ZButton({ confirmRemove = true }, Modifier.fillMaxWidth(), ZButtonVariant.Danger) {
+                ZButtonText("Remove from this phone")
             }
-        },
-        confirmButton = {
-            if (confirmRemove) {
-                ZButton(
-                    {
-                        busy = true
-                        onRemove { result ->
-                            busy = false
-                            result.onSuccess { onDismiss() }.onFailure { error = it.message ?: "Could not remove it" }
-                        }
-                    },
-                    variant = ZButtonVariant.Danger,
-                    enabled = !busy,
-                ) { ZButtonText("Remove") }
-            } else {
-                ZButton(
-                    {
-                        onRename(name).onSuccess { onDismiss() }.onFailure { error = it.message ?: "Could not rename it" }
-                    },
-                    variant = ZButtonVariant.Primary,
-                ) { ZButtonText("Save") }
-            }
-        },
-        dismissButton = {
-            ZButton({ if (confirmRemove) confirmRemove = false else onDismiss() }, variant = ZButtonVariant.Ghost, enabled = !busy) {
-                ZButtonText("Cancel")
-            }
-        },
-    )
+        }
+        ZButton({ if (confirmRemove) confirmRemove = false else onDismiss() }, Modifier.fillMaxWidth(), ZButtonVariant.Ghost, enabled = !busy) {
+            ZButtonText("Cancel")
+        }
+    }
 }
 
 /** El último paso de una billetera más: su nombre. Después pasa a ella. */

@@ -1,10 +1,17 @@
 package com.zoka.zkapriv.ui.components
 
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
@@ -33,6 +40,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -46,7 +54,6 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -64,8 +71,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.Role
@@ -76,13 +87,14 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.google.zxing.BarcodeFormat
@@ -98,30 +110,30 @@ import kotlinx.coroutines.delay
 import kotlin.math.floor
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Primitivos de ZKAPriv 3, portados de ZSilent (ui/components/Components.kt).
+//  Primitivos de ZKAPriv 4.1, con el estilo «negro y vidrio» de zoka.network.
 //
-//  Dos reglas: ningún color literal (todo sale de Zk.colors) y toda animación
-//  consulta Zk.animations antes de moverse. Donde en escritorio algo cambia
-//  al pasar el mouse, acá cambia al apretar.
+//  Tres reglas: ningún color literal (todo sale de Zk.colors), toda animación
+//  consulta Zk.animations antes de moverse y lo que se toca es cápsula. Los
+//  botones principales y lo elegido son negros con letras rosa (zkInk).
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Tonos de estado. Solo On/Warn/Err llevan color, y su punto late. */
+/** Tonos de estado. Solo On/Warn/Err llevan color de estado, y su punto late. */
 enum class ZkTone { Default, On, Warn, Err, Off, Info, Accent }
 
 @Composable
 private fun ZkTone.foreground(): Color = when (this) {
-    ZkTone.Default -> Zk.colors.textMuted
+    ZkTone.Default, ZkTone.Off -> Zk.colors.textMuted
     ZkTone.On -> Zk.colors.success
     ZkTone.Warn -> Zk.colors.warning
     ZkTone.Err -> Zk.colors.danger
-    ZkTone.Off -> Zk.colors.textMuted.copy(alpha = 0.7f)
     ZkTone.Info -> Zk.colors.text
-    ZkTone.Accent -> Zk.colors.accent
+    ZkTone.Accent -> Zk.colors.accentSoft
 }
 
 @Composable
 private fun ZkTone.container(): Color = when (this) {
     ZkTone.Default, ZkTone.Off, ZkTone.Info -> Zk.colors.surface2
+    ZkTone.Accent -> Zk.colors.accentWash
     else -> foreground().copy(alpha = 0.10f)
 }
 
@@ -129,11 +141,47 @@ private fun ZkTone.container(): Color = when (this) {
 private fun ZkTone.borderColor(): Color = when (this) {
     ZkTone.Default, ZkTone.Off -> Zk.colors.border
     ZkTone.Info -> Zk.colors.borderStrong
-    else -> foreground().copy(alpha = 0.30f)
+    ZkTone.Accent -> Zk.colors.accentLine
+    else -> foreground().copy(alpha = 0.32f)
 }
 
 private val ZkTone.pulses: Boolean
     get() = this == ZkTone.On || this == ZkTone.Warn || this == ZkTone.Err
+
+// ── Vidrio ───────────────────────────────────────────────────────────────────
+
+/**
+ * Tarjeta de vidrio: un degradé apenas más claro que el fondo y un borde de
+ * 1 dp más luminoso arriba. `hero` marca la tarjeta principal de la pantalla.
+ */
+@Composable
+fun Modifier.zkGlass(shape: Shape, hero: Boolean = false): Modifier {
+    val c = Zk.colors
+    return this
+        .background(Brush.linearGradient(c.glass), shape)
+        .border(BorderStroke(1.dp, Brush.verticalGradient(if (hero) c.heroEdge else c.glassEdge)), shape)
+}
+
+/** Cápsula neutra: botón secundario, pastilla, tecla, botón de ícono. */
+@Composable
+fun Modifier.zkCapsule(shape: Shape = CircleShape, pressed: Boolean = false): Modifier {
+    val c = Zk.colors
+    return this
+        .background(Brush.verticalGradient(if (pressed) c.capsulePressed else c.capsule), shape)
+        .border(BorderStroke(1.dp, c.borderStrong), shape)
+}
+
+/**
+ * Lo elegido y los botones principales: negro en los dos temas, para letras
+ * `onInk`. En oscuro el borde rosa se enciende al apretar.
+ */
+@Composable
+fun Modifier.zkInk(shape: Shape = CircleShape, pressed: Boolean = false): Modifier {
+    val c = Zk.colors
+    return this
+        .background(Brush.verticalGradient(if (pressed) c.inkPressed else c.ink), shape)
+        .border(BorderStroke(1.dp, if (pressed && c.dark) c.accent else c.inkLine), shape)
+}
 
 // ── Movimiento ───────────────────────────────────────────────────────────────
 
@@ -186,25 +234,59 @@ private fun animatedColor(target: Color, label: String): Color {
     return color
 }
 
+/** Un temblor corto cada vez que `trigger` cambia: un PIN o una palabra errados. */
+@Composable
+fun Modifier.zkShake(trigger: Int): Modifier {
+    val shift = remember { Animatable(0f) }
+    val animate = Zk.animations
+    LaunchedEffect(trigger) {
+        if (trigger == 0 || !animate) return@LaunchedEffect
+        for (x in listOf(-10f, 9f, -6f, 4f, -2f, 0f)) shift.animateTo(x, tween(45))
+    }
+    return this.offset { IntOffset(shift.value.dp.roundToPx(), 0) }
+}
+
+/** Lo que se aprieta se achica un 2 %. */
+@Composable
+private fun Modifier.pressScale(pressed: Boolean): Modifier {
+    val scale by animateFloatAsState(
+        if (pressed) 0.98f else 1f,
+        if (Zk.animations) tween(120) else snap(),
+        label = "zk-press",
+    )
+    return graphicsLayer {
+        scaleX = scale
+        scaleY = scale
+    }
+}
+
 // ── Contenedores ─────────────────────────────────────────────────────────────
 
-/** Panel: relleno casi igual al fondo y borde de 1 dp, que es lo que separa. */
+/**
+ * Tarjeta de vidrio. `hero` es la principal de una pantalla (el saldo, el QR,
+ * la red): esquinas de 28 dp y borde más marcado. `gap` separa sus bloques
+ * (0 para filas con divisores). Con `onClick`, toda la tarjeta se toca.
+ */
 @Composable
 fun Panel(
     modifier: Modifier = Modifier,
     title: String? = null,
     right: @Composable (() -> Unit)? = null,
     contentPadding: PaddingValues = PaddingValues(Zk.spacing.panel),
+    gap: Dp = Zk.spacing.gap,
+    hero: Boolean = false,
+    onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val shape = MaterialTheme.shapes.medium
+    val shape = if (hero) MaterialTheme.shapes.extraLarge else MaterialTheme.shapes.large
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(Zk.colors.surface, shape)
-            .border(BorderStroke(1.dp, Zk.colors.border), shape)
+            .zkGlass(shape, hero)
+            .clip(shape)
+            .let { if (onClick != null) it.clickable(onClick = onClick) else it }
             .padding(contentPadding),
-        verticalArrangement = Arrangement.spacedBy(Zk.spacing.gap),
+        verticalArrangement = Arrangement.spacedBy(gap),
     ) {
         CompositionLocalProvider(LocalContentColor provides Zk.colors.text) {
             if (title != null) PanelHeader(title = title, right = right)
@@ -235,21 +317,91 @@ fun PanelHeader(
     }
 }
 
-/** Eyebrow rosa en mono mayúscula: la firma visual del diseño. */
+/** El puntito rosa de la web. */
 @Composable
-fun Eyebrow(text: String, modifier: Modifier = Modifier) {
-    Text(text.uppercase(), modifier = modifier, style = Zk.text.eyebrow, color = Zk.colors.accent)
+fun AccentDot(modifier: Modifier = Modifier, size: Dp = 6.dp, color: Color = Zk.colors.accent) {
+    Box(modifier.size(size).background(color, CircleShape))
 }
 
-/** Encabezado de sección: eyebrow, título y bajada. */
+/**
+ * Eyebrow en mono mayúscula y gris, como los de zoka.network; `dot` le
+ * antepone el puntito rosa, que es el detalle de color.
+ */
 @Composable
-fun SectionTitle(eyebrow: String, title: String, sub: String? = null) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Eyebrow(eyebrow)
+fun Eyebrow(text: String, modifier: Modifier = Modifier, dot: Boolean = false) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (dot) AccentDot()
+        Text(text.uppercase(), style = Zk.text.eyebrow, color = Zk.colors.textMuted, maxLines = 1, softWrap = false)
+    }
+}
+
+/** Encabezado de sección: eyebrow (si hay), título y bajada. */
+@Composable
+fun SectionTitle(eyebrow: String?, title: String, sub: String? = null) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (eyebrow != null) Eyebrow(eyebrow)
         Text(title, style = MaterialTheme.typography.headlineMedium, color = Zk.colors.text)
         if (sub != null) {
-            Text(sub, style = MaterialTheme.typography.bodyMedium, color = Zk.colors.textMuted)
+            Text(sub, style = Zk.text.lead, color = Zk.colors.textSoft)
         }
+    }
+}
+
+/** Ícono en un recuadro: filas de ajustes, movimientos, billeteras. */
+@Composable
+fun IconSquare(
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    tint: Color = Zk.colors.textSoft,
+    active: Boolean = false,
+    size: Dp = 40.dp,
+) {
+    val c = Zk.colors
+    val shape = MaterialTheme.shapes.small
+    Box(
+        modifier
+            .size(size)
+            .background(c.surface2, shape)
+            .border(BorderStroke(1.dp, if (active) c.accentLine else c.border), shape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = null, tint = if (active) c.accent else tint, modifier = Modifier.size(size * 0.5f))
+    }
+}
+
+/** La tilde de «listo» o «en uso»: negra con el trazo rosa, como los botones. */
+@Composable
+fun CheckBadge(modifier: Modifier = Modifier) {
+    Box(modifier.size(22.dp).zkInk(), contentAlignment = Alignment.Center) {
+        Icon(Icons.Outlined.Check, contentDescription = null, tint = Zk.colors.onInk, modifier = Modifier.size(14.dp))
+    }
+}
+
+/**
+ * El arco de luz de zoka.network, muy tenue: un círculo enorme del que se ve
+ * solo la parte de abajo, con un resplandor. Es el único adorno de la app y va
+ * solo en la bienvenida y el bloqueo; nunca en el inicio.
+ */
+@Composable
+fun GlassArc(modifier: Modifier = Modifier, towardsEnd: Boolean = false) {
+    val c = Zk.colors
+    val glow = c.text.copy(alpha = if (c.dark) 0.07f else 0.035f)
+    Canvas(modifier.fillMaxSize()) {
+        val radius = size.width * 1.05f
+        val center = Offset(
+            if (towardsEnd) size.width * 0.95f else size.width / 2f,
+            size.height * 0.30f - radius,
+        )
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(glow, Color.Transparent),
+                center = Offset(center.x, center.y + radius * 0.86f),
+                radius = radius * 0.55f,
+            ),
+            radius = radius,
+            center = center,
+        )
+        drawCircle(c.border, radius, center, style = Stroke(1.dp.toPx()))
     }
 }
 
@@ -286,18 +438,17 @@ fun Stat(
 /** Insignia de estado con punto; los tonos activos laten. */
 @Composable
 fun Pill(text: String, modifier: Modifier = Modifier, tone: ZkTone = ZkTone.Default) {
-    val shape = MaterialTheme.shapes.extraSmall
     val fg = tone.foreground()
     val alpha = if (tone.pulses) zkPulseAlpha() else 1f
     Row(
         modifier = modifier
-            .background(tone.container(), shape)
-            .border(BorderStroke(1.dp, tone.borderColor()), shape)
-            .padding(horizontal = 6.dp, vertical = 2.dp),
+            .background(tone.container(), CircleShape)
+            .border(BorderStroke(1.dp, tone.borderColor()), CircleShape)
+            .padding(horizontal = 9.dp, vertical = 3.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (tone != ZkTone.Default && tone != ZkTone.Off) {
+        if (tone != ZkTone.Default && tone != ZkTone.Off && tone != ZkTone.Accent) {
             Box(Modifier.size(6.dp).alpha(alpha).background(fg, CircleShape))
         }
         Text(text.uppercase(), style = Zk.text.pill, color = fg, maxLines = 1)
@@ -335,7 +486,7 @@ fun KeyValueRow(label: String, value: String, modifier: Modifier = Modifier) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, style = MaterialTheme.typography.bodySmall, color = Zk.colors.textMuted)
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = Zk.colors.textMuted)
         Text(
             value,
             style = Zk.text.mono,
@@ -356,7 +507,7 @@ fun KeyValueRow(label: String, value: String, modifier: Modifier = Modifier) {
 fun CopyableKeyValueRow(label: String, value: String, modifier: Modifier = Modifier) {
     val shown = remember(value) { middleTruncated(value, head = 16, tail = 12) }
     Column(modifier.fillMaxWidth().padding(top = Zk.spacing.row / 2)) {
-        Text(label, style = MaterialTheme.typography.bodySmall, color = Zk.colors.textMuted)
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = Zk.colors.textMuted)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 shown,
@@ -371,7 +522,7 @@ fun CopyableKeyValueRow(label: String, value: String, modifier: Modifier = Modif
     }
 }
 
-/** Medidor fino (sincronización, progreso de la prueba). */
+/** Medidor fino (sincronización, partes del QR). */
 @Composable
 fun MeterBar(fraction: Float, modifier: Modifier = Modifier, color: Color = Zk.colors.accent) {
     val safe = fraction.coerceIn(0f, 1f)
@@ -388,24 +539,23 @@ fun MeterBar(fraction: Float, modifier: Modifier = Modifier, color: Color = Zk.c
 // ── Controles ────────────────────────────────────────────────────────────────
 
 enum class ZButtonVariant {
-    /** La acción principal de una pantalla: relleno rosa. Una por pantalla. */
+    /** La acción principal de una pantalla: negro con letras rosa. Una por pantalla. */
     Primary,
-    /** Contorno rosa que se rellena al apretar, como el botón de zoka.network. */
-    Accent,
-    Default,
+    /** Las demás: cápsula de vidrio con letras del color del texto. */
+    Secondary,
+    /** Solo texto: cancelar, saltar, un enlace. */
     Ghost,
     Danger,
-    Outline,
 }
 
 enum class ZButtonSize { Small, Medium, Large }
 
-/** Botón: texto en mayúscula, borde de 1 dp y sin elevación. */
+/** Botón: cápsula, texto mono en mayúscula y sin elevación. */
 @Composable
 fun ZButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    variant: ZButtonVariant = ZButtonVariant.Default,
+    variant: ZButtonVariant = ZButtonVariant.Secondary,
     size: ZButtonSize = ZButtonSize.Medium,
     enabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
@@ -414,46 +564,37 @@ fun ZButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val active = pressed && enabled
-    val container = when (variant) {
-        ZButtonVariant.Primary -> if (active) c.accent.copy(alpha = 0.85f) else c.accent
-        ZButtonVariant.Accent -> if (active) c.accent else Color.Transparent
-        ZButtonVariant.Default -> if (active) c.elevated else c.surface2
-        ZButtonVariant.Ghost -> if (active) c.surface2 else Color.Transparent
-        ZButtonVariant.Danger -> c.danger.copy(alpha = if (active) 0.20f else 0.10f)
-        ZButtonVariant.Outline -> if (active) c.surface2 else Color.Transparent
-    }
     val fg = when (variant) {
-        ZButtonVariant.Primary -> c.onAccent
-        ZButtonVariant.Accent -> if (active) c.onAccent else c.text
-        ZButtonVariant.Default, ZButtonVariant.Outline -> c.text
+        ZButtonVariant.Primary -> c.onInk
+        ZButtonVariant.Secondary -> c.text
         ZButtonVariant.Ghost -> if (active) c.text else c.textMuted
         ZButtonVariant.Danger -> c.danger
     }
-    val borderTarget = when (variant) {
-        ZButtonVariant.Primary, ZButtonVariant.Accent -> c.accent
-        ZButtonVariant.Default -> if (active) c.borderStrong else c.border
-        ZButtonVariant.Ghost -> Color.Transparent
-        ZButtonVariant.Danger -> c.danger.copy(alpha = 0.40f)
-        ZButtonVariant.Outline -> c.borderStrong
-    }
-    val border = animatedColor(borderTarget, "zk-button-border")
     val height = when (size) {
         ZButtonSize.Small -> 36.dp
         ZButtonSize.Medium -> Zk.spacing.control
-        ZButtonSize.Large -> Zk.spacing.control + 4.dp
+        ZButtonSize.Large -> 54.dp
     }
     val horizontal = when (size) {
-        ZButtonSize.Small -> 12.dp
-        ZButtonSize.Medium -> 16.dp
-        ZButtonSize.Large -> 20.dp
+        ZButtonSize.Small -> 14.dp
+        ZButtonSize.Medium -> 18.dp
+        ZButtonSize.Large -> 22.dp
     }
-    val shape = MaterialTheme.shapes.small
+    val look = when (variant) {
+        ZButtonVariant.Primary -> Modifier.zkInk(pressed = active)
+        ZButtonVariant.Secondary -> Modifier.zkCapsule(pressed = active)
+        ZButtonVariant.Ghost -> Modifier.background(if (active) c.surface2 else Color.Transparent, CircleShape)
+        ZButtonVariant.Danger -> Modifier
+            .background(c.danger.copy(alpha = if (active) 0.18f else 0.08f), CircleShape)
+            .border(BorderStroke(1.dp, c.danger.copy(alpha = 0.42f)), CircleShape)
+    }
     Row(
         modifier = modifier
             .heightIn(min = height)
-            .alpha(if (enabled) 1f else 0.4f)
-            .background(container, shape)
-            .border(BorderStroke(1.dp, border), shape)
+            .alpha(if (enabled) 1f else 0.38f)
+            .pressScale(active)
+            .then(look)
+            .clip(CircleShape)
             .clickable(
                 enabled = enabled,
                 interactionSource = interaction,
@@ -474,10 +615,11 @@ fun ZButton(
 fun ZButtonText(text: String) {
     Text(
         text.uppercase(),
-        style = MaterialTheme.typography.labelLarge,
-        fontWeight = FontWeight.Medium,
+        style = Zk.text.button,
         color = LocalContentColor.current,
         maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Ellipsis,
     )
 }
 
@@ -504,6 +646,12 @@ fun QuanticWordmark(
     )
 }
 
+/** La marca chica de la web: `ZOKA QUANTIC` en mono, con mucho aire. */
+@Composable
+fun BrandMark(modifier: Modifier = Modifier) {
+    Text("ZOKA QUANTIC", modifier = modifier, style = Zk.text.brandMark, color = Zk.colors.textSoft, maxLines = 1, softWrap = false)
+}
+
 /** Etiqueta de campo: mono, mayúscula, tracking ancho. */
 @Composable
 fun ZLabel(text: String, modifier: Modifier = Modifier) {
@@ -526,20 +674,21 @@ fun ZInput(
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     isError: Boolean = false,
+    textStyle: TextStyle? = null,
     trailing: @Composable (() -> Unit)? = null,
 ) {
     val c = Zk.colors
     var focused by remember { mutableStateOf(false) }
-    val shape = MaterialTheme.shapes.small
+    val shape = MaterialTheme.shapes.medium
     val border = animatedColor(
         when {
-            isError -> c.danger.copy(alpha = 0.6f)
-            focused -> c.accent.copy(alpha = 0.6f)
+            isError -> c.danger.copy(alpha = 0.7f)
+            focused -> c.accentLine
             else -> c.border
         },
         "zk-input-border",
     )
-    val style = (if (mono) Zk.text.mono else MaterialTheme.typography.bodyLarge).copy(color = c.text)
+    val style = (textStyle ?: if (mono) Zk.text.mono else MaterialTheme.typography.bodyLarge).copy(color = c.text)
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
@@ -556,7 +705,7 @@ fun ZInput(
         cursorBrush = SolidColor(c.accent),
         decorationBox = { inner ->
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
+                Modifier.fillMaxWidth().padding(start = 14.dp, end = if (trailing != null) 6.dp else 14.dp, top = 12.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(Modifier.weight(1f)) {
@@ -564,7 +713,7 @@ fun ZInput(
                         Text(
                             placeholder,
                             style = style,
-                            color = c.textMuted.copy(alpha = 0.7f),
+                            color = c.textFaint,
                             maxLines = if (singleLine) 1 else Int.MAX_VALUE,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -580,36 +729,45 @@ fun ZInput(
     )
 }
 
-/** Interruptor: pista de 44×24 dp con pastilla de 16 dp; rosa prendido. */
+/**
+ * Interruptor: prendido es negro con la pastilla rosa, como los botones. Sin
+ * `onCheckedChange` solo se dibuja: lo toca la fila que lo contiene.
+ */
 @Composable
 fun ZToggle(
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
+    onCheckedChange: ((Boolean) -> Unit)?,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     description: String? = null,
 ) {
     val c = Zk.colors
+    val track = if (checked) Modifier.zkInk() else Modifier
+        .background(c.surface2, CircleShape)
+        .border(BorderStroke(1.dp, c.borderStrong), CircleShape)
     Box(
         modifier
-            .size(width = 44.dp, height = 24.dp)
-            .alpha(if (enabled) 1f else 0.4f)
-            .background(if (checked) c.accent.copy(alpha = 0.3f) else c.surface2, CircleShape)
-            .border(BorderStroke(1.dp, if (checked) c.accent else c.border), CircleShape)
-            .clickable(enabled = enabled, role = Role.Switch) { onCheckedChange(!checked) }
-            .semantics { if (description != null) contentDescription = description },
+            .size(width = 48.dp, height = 28.dp)
+            .alpha(if (enabled) 1f else 0.38f)
+            .then(track)
+            .let {
+                if (onCheckedChange == null) it else it
+                    .clip(CircleShape)
+                    .clickable(enabled = enabled, role = Role.Switch) { onCheckedChange(!checked) }
+                    .semantics { if (description != null) contentDescription = description }
+            },
         contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
         Box(
             Modifier
-                .padding(horizontal = 3.dp)
-                .size(16.dp)
-                .background(if (checked) c.accent else c.textMuted, CircleShape),
+                .padding(horizontal = 4.dp)
+                .size(20.dp)
+                .background(if (checked) c.onInk else c.textMuted, CircleShape),
         )
     }
 }
 
-/** Selector de una opción entre pocas. */
+/** Selector de una opción entre pocas: la elegida es negra con letras rosa. */
 @Composable
 fun Segmented(
     options: List<String>,
@@ -619,12 +777,11 @@ fun Segmented(
     enabled: Boolean = true,
 ) {
     val c = Zk.colors
-    val shape = MaterialTheme.shapes.small
     Row(
         modifier
-            .background(c.surface2, shape)
-            .border(BorderStroke(1.dp, c.border), shape)
-            .padding(2.dp),
+            .background(c.surface2, CircleShape)
+            .border(BorderStroke(1.dp, c.border), CircleShape)
+            .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         options.forEach { option ->
@@ -633,21 +790,22 @@ fun Segmented(
                 Modifier
                     .weight(1f)
                     .heightIn(min = 36.dp)
-                    .background(
-                        if (active) c.accent.copy(alpha = 0.20f) else Color.Transparent,
-                        MaterialTheme.shapes.extraSmall,
-                    )
-                    .clickable(enabled = enabled, role = Role.Tab) { onSelect(option) },
+                    .then(if (active) Modifier.zkInk() else Modifier)
+                    .clip(CircleShape)
+                    .clickable(enabled = enabled, role = Role.Tab) { onSelect(option) }
+                    .semantics { this.selected = active },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     option.uppercase(),
-                    style = Zk.text.pill,
+                    style = Zk.text.button.copy(fontSize = 11.sp, letterSpacing = 1.3.sp),
                     color = when {
                         !enabled -> c.textMuted.copy(alpha = 0.5f)
-                        active -> c.accent
+                        active -> c.onInk
                         else -> c.textMuted
                     },
+                    maxLines = 1,
+                    softWrap = false,
                 )
             }
         }
@@ -660,7 +818,7 @@ fun CopyButton(
     value: String,
     modifier: Modifier = Modifier,
     label: String = "Copy",
-    variant: ZButtonVariant = ZButtonVariant.Default,
+    variant: ZButtonVariant = ZButtonVariant.Secondary,
     size: ZButtonSize = ZButtonSize.Small,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -684,10 +842,40 @@ fun CopyButton(
         Icon(
             if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
             contentDescription = null,
-            tint = if (copied) Zk.colors.success else LocalContentColor.current,
-            modifier = Modifier.size(14.dp),
+            tint = LocalContentColor.current,
+            modifier = Modifier.size(15.dp),
         )
         ZButtonText(if (copied) "Copied" else label)
+    }
+}
+
+@Composable
+fun CopyIconButton(value: String, what: String = "value") {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1200)
+            copied = false
+        }
+    }
+    Box(
+        Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .clickable(enabled = value.isNotBlank(), role = Role.Button) {
+                clipboard.setText(AnnotatedString(value))
+                copied = true
+            }
+            .semantics { contentDescription = "Copy $what" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
+            contentDescription = null,
+            tint = if (copied) Zk.colors.accent else Zk.colors.textMuted,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
@@ -707,16 +895,22 @@ fun ZChip(
     leading: @Composable (() -> Unit)? = null,
 ) {
     val c = Zk.colors
-    val fg = if (selected) c.accent else c.textMuted
-    val border = animatedColor(if (selected) c.accent else c.borderStrong, "zk-chip-border")
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val fg = if (selected) c.onInk else c.textSoft
     Row(
         modifier
             .heightIn(min = 38.dp)
-            .alpha(if (enabled) 1f else 0.4f)
-            .background(if (selected) c.accent.copy(alpha = 0.20f) else c.surface2, CircleShape)
-            .border(BorderStroke(1.dp, border), CircleShape)
+            .alpha(if (enabled) 1f else 0.38f)
+            .then(if (selected) Modifier.zkInk(pressed = pressed) else Modifier.zkCapsule(pressed = pressed))
             .clip(CircleShape)
-            .clickable(enabled = enabled, role = role, onClick = onClick)
+            .clickable(
+                enabled = enabled,
+                interactionSource = interaction,
+                indication = null,
+                role = role,
+                onClick = onClick,
+            )
             .semantics { if (role == Role.Tab) this.selected = selected }
             .padding(horizontal = 15.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -724,7 +918,62 @@ fun ZChip(
     ) {
         CompositionLocalProvider(LocalContentColor provides fg) {
             leading?.invoke()
-            Text(text, style = Zk.text.mono, color = fg, maxLines = 1, softWrap = false)
+            Text(text, style = Zk.text.mono.copy(fontSize = 12.sp), color = fg, maxLines = 1, softWrap = false)
+        }
+    }
+}
+
+/** Botón redondo de 44 dp con un ícono: volver, escanear, la linterna. */
+@Composable
+fun GlassIconButton(
+    icon: ImageVector,
+    description: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = Zk.colors.text,
+    enabled: Boolean = true,
+    selected: Boolean = false,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    Box(
+        modifier
+            .size(44.dp)
+            .alpha(if (enabled) 1f else 0.38f)
+            .then(if (selected) Modifier.zkInk(pressed = pressed) else Modifier.zkCapsule(pressed = pressed))
+            .clip(CircleShape)
+            .clickable(
+                enabled = enabled,
+                interactionSource = interaction,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = if (selected) Zk.colors.onInk else tint,
+            modifier = Modifier.size(21.dp),
+        )
+    }
+}
+
+/** Barritas de paso de un alta: las hechas y la actual, en rosa. */
+@Composable
+fun StepBars(current: Int, total: Int, modifier: Modifier = Modifier) {
+    Row(
+        modifier.semantics { contentDescription = "Step $current of $total" },
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        repeat(total) { i ->
+            Box(
+                Modifier
+                    .size(width = 22.dp, height = 4.dp)
+                    .background(if (i < current) Zk.colors.accent else Zk.colors.borderStrong, CircleShape),
+            )
         }
     }
 }
@@ -736,7 +985,9 @@ fun ZChip(
 @Composable
 fun ZSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     val c = Zk.colors
-    val shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+    val shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    val animate = Zk.animations
+    val shown = remember { MutableTransitionState(!animate).apply { targetState = true } }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(
             Modifier
@@ -748,50 +999,38 @@ fun ZSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
                 ),
             contentAlignment = Alignment.BottomCenter,
         ) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .background(c.elevated, shape)
-                    .border(BorderStroke(1.dp, c.borderStrong), shape)
-                    // Tocar la hoja no la cierra.
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = {},
-                    )
-                    .navigationBarsPadding()
-                    .padding(horizontal = 20.dp, vertical = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(Zk.spacing.gap),
+            AnimatedVisibility(
+                visibleState = shown,
+                enter = slideInVertically(tween(ZK_DURATION_ENTER, easing = ZkEasing)) { it / 3 } +
+                    fadeIn(tween(ZK_DURATION_FAST)),
             ) {
-                CompositionLocalProvider(LocalContentColor provides c.text) { content() }
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(c.elevated, shape)
+                        .border(BorderStroke(1.dp, Brush.verticalGradient(c.heroEdge)), shape)
+                        // Tocar la hoja no la cierra.
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {},
+                        )
+                        .navigationBarsPadding()
+                        .imePadding()
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(Zk.spacing.gap),
+                ) {
+                    Box(
+                        Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .size(width = 36.dp, height = 4.dp)
+                            .background(c.borderStrong, CircleShape),
+                    )
+                    CompositionLocalProvider(LocalContentColor provides c.text) { content() }
+                }
             }
         }
-    }
-}
-
-@Composable
-fun CopyIconButton(value: String, what: String = "value") {
-    val clipboard = LocalClipboardManager.current
-    var copied by remember { mutableStateOf(false) }
-    LaunchedEffect(copied) {
-        if (copied) {
-            delay(1200)
-            copied = false
-        }
-    }
-    IconButton(
-        onClick = {
-            clipboard.setText(AnnotatedString(value))
-            copied = true
-        },
-        enabled = value.isNotBlank(),
-    ) {
-        Icon(
-            if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
-            contentDescription = "Copy $what",
-            tint = if (copied) Zk.colors.success else Zk.colors.textMuted,
-            modifier = Modifier.size(18.dp),
-        )
     }
 }
 
@@ -821,16 +1060,17 @@ fun qrDarkRuns(qr: BitMatrix): List<QrRun> {
 }
 
 /**
- * QR estándar: módulos cuadrados, esquinas como manda la norma, 4 módulos de
- * margen y SIEMPRE negro sobre blanco, en los dos temas. Muchos lectores no
- * leen un QR invertido, y esto es una dirección de cobro.
+ * QR estándar sobre una placa blanca: módulos cuadrados, esquinas como manda
+ * la norma, 4 módulos de margen y SIEMPRE negro sobre blanco, en los dos
+ * temas. Muchos lectores no leen un QR invertido, y esto es una dirección de
+ * cobro.
  */
 @Composable
 fun ZkQrCode(
     value: String,
     modifier: Modifier = Modifier,
     errorCorrection: ErrorCorrectionLevel = ErrorCorrectionLevel.M,
-    boxSize: Dp = 240.dp,
+    boxSize: Dp = 232.dp,
 ) {
     val matrix = remember(value, errorCorrection) {
         runCatching {
@@ -848,13 +1088,13 @@ fun ZkQrCode(
     }
     val runs = remember(matrix) { matrix?.let(::qrDarkRuns).orEmpty() }
     val c = Zk.colors
+    val shape = MaterialTheme.shapes.medium
     Box(
         modifier = modifier
             .size(boxSize)
-            .background(c.surface2, MaterialTheme.shapes.medium)
-            .border(BorderStroke(1.dp, c.border), MaterialTheme.shapes.medium)
-            .padding(10.dp)
-            .background(c.qrLight, MaterialTheme.shapes.small),
+            .background(c.qrLight, shape)
+            .border(BorderStroke(1.dp, c.border), shape)
+            .padding(6.dp),
     ) {
         Canvas(Modifier.fillMaxSize()) {
             val qr = matrix ?: return@Canvas
@@ -887,18 +1127,20 @@ fun EmptyState(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .border(BorderStroke(1.dp, c.border), MaterialTheme.shapes.medium)
+            .zkGlass(MaterialTheme.shapes.large)
             .padding(horizontal = 24.dp, vertical = 36.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(
-            icon ?: Icons.Outlined.Inbox,
-            contentDescription = null,
-            tint = c.textMuted,
-            modifier = Modifier.size(22.dp),
-        )
-        Text(text, style = MaterialTheme.typography.titleSmall, color = c.text, textAlign = TextAlign.Center)
+        Box(Modifier.size(48.dp).zkCapsule(), contentAlignment = Alignment.Center) {
+            Icon(
+                icon ?: Icons.Outlined.Inbox,
+                contentDescription = null,
+                tint = c.textMuted,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Text(text, style = MaterialTheme.typography.titleMedium, color = c.text, textAlign = TextAlign.Center)
         if (sub != null) {
             Text(
                 sub,
@@ -920,13 +1162,13 @@ fun Notice(
     tone: ZkTone = ZkTone.Warn,
     action: @Composable (() -> Unit)? = null,
 ) {
-    val shape = MaterialTheme.shapes.small
+    val shape = MaterialTheme.shapes.medium
     Row(
         modifier
             .fillMaxWidth()
             .background(tone.container(), shape)
             .border(BorderStroke(1.dp, tone.borderColor()), shape)
-            .padding(12.dp),
+            .padding(14.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Box(Modifier.padding(top = 6.dp).size(6.dp).background(tone.foreground(), CircleShape))
@@ -934,7 +1176,7 @@ fun Notice(
             if (title != null) {
                 Text(title, style = MaterialTheme.typography.titleSmall, color = Zk.colors.text)
             }
-            Text(text, style = MaterialTheme.typography.bodySmall, color = Zk.colors.textMuted)
+            Text(text, style = MaterialTheme.typography.bodySmall, color = Zk.colors.textSoft)
             action?.invoke()
         }
     }

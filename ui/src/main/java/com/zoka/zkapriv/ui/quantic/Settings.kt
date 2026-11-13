@@ -2,17 +2,19 @@ package com.zoka.zkapriv.ui.quantic
 
 import android.content.Intent
 import android.net.Uri
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ChevronRight
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.Animation
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Fingerprint
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -20,32 +22,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import com.zoka.zkapriv.core.preferences.ThemeMode
 import com.zoka.zkapriv.network.quantic.ViewKeyScope
-import com.zoka.zkapriv.security.vault.QuanticVault
 import com.zoka.zkapriv.ui.components.CopyButton
 import com.zoka.zkapriv.ui.components.ErrorText
 import com.zoka.zkapriv.ui.components.HintText
-import com.zoka.zkapriv.ui.components.KeyValueRow
 import com.zoka.zkapriv.ui.components.MonoText
 import com.zoka.zkapriv.ui.components.Notice
 import com.zoka.zkapriv.ui.components.Panel
 import com.zoka.zkapriv.ui.components.Segmented
-import com.zoka.zkapriv.ui.components.ThinDivider
-import com.zoka.zkapriv.ui.components.ZButton
-import com.zoka.zkapriv.ui.components.ZButtonText
-import com.zoka.zkapriv.ui.components.ZButtonVariant
-import com.zoka.zkapriv.ui.components.ZToggle
 import com.zoka.zkapriv.ui.components.ZkTone
-import com.zoka.zkapriv.ui.theme.Zk
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 
 @Composable
@@ -54,140 +45,104 @@ fun SettingsScreen(
     onBack: (() -> Unit)?,
     onReveal: (String) -> Unit,
     onChangePin: () -> Unit,
-    onWiped: () -> Unit,
+    onReset: () -> Unit,
     onNetwork: () -> Unit = {},
     onWallets: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val sending by vm.sendState.collectAsState()
     val theme by vm.themeMode.collectAsState()
     val animations by vm.animations.collectAsState()
     var biometric by remember { mutableStateOf(vm.biometricEnabled()) }
-    var confirmWipe by remember { mutableStateOf(false) }
     val version = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull()
     }
-
-    fun open(url: String) = context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-
-    ZkScreen(title = "Settings", onBack = onBack) {
-        Panel(title = "Wallets") {
-            SettingRow("Wallets", "Switch, create or restore wallets on this phone.", onWallets)
-        }
-
-        Panel(title = "Security") {
-            SettingRow("Recovery phrase", "The 24 words of the wallet in use. Asks for your PIN.") { onReveal("phrase") }
-            ThinDivider()
-            SettingRow("View keys", "Share incoming payments only, or choose full history and balance.") { onReveal("viewkey") }
-            ThinDivider()
-            SettingRow("Change PIN", null, onChangePin)
-            ThinDivider()
-            SwitchRow("Unlock with biometrics", null, biometric) { enabled ->
-                if (!enabled) {
-                    vm.setBiometric(false)
-                    biometric = false
-                } else {
-                    val activity = context as? FragmentActivity ?: return@SwitchRow
+    SettingsContent(
+        theme, animations, biometric, version ?: "—", onBack, onReveal, onChangePin,
+        onReset, onNetwork, onWallets, vm::setTheme, vm::setAnimations,
+        onBiometric = { enabled ->
+            if (!enabled) {
+                vm.setBiometric(false)
+                biometric = false
+            } else {
+                val activity = context as? FragmentActivity
+                if (activity != null) {
                     authenticate(activity, "Use biometrics for ZKAPriv", "Confirm it is you", onSuccess = {
                         vm.setBiometric(true)
                         biometric = true
                     })
                 }
             }
-            HintText("ZKAPriv locks itself when you leave it and after 5 minutes without use.")
-        }
+        },
+        onOpen = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) },
+    )
+}
 
-        Panel(title = "Network") {
-            SettingRow("Network & Tor", "Connection, sync, verification and Tor mode.", onNetwork)
+/** Ajustes sin almacén: la vista de diseño usa los mismos controles. */
+@Composable
+internal fun SettingsContent(
+    theme: ThemeMode,
+    animations: Boolean,
+    biometric: Boolean,
+    version: String,
+    onBack: (() -> Unit)?,
+    onReveal: (String) -> Unit,
+    onChangePin: () -> Unit,
+    onReset: () -> Unit,
+    onNetwork: () -> Unit,
+    onWallets: () -> Unit,
+    onTheme: (ThemeMode) -> Unit,
+    onAnimations: (Boolean) -> Unit,
+    onBiometric: (Boolean) -> Unit,
+    onOpen: (String) -> Unit,
+) {
+    ZkScreen(title = "Settings", onBack = onBack) {
+        SettingsGroup("Wallets") {
+            SettingRow("Your wallets", onWallets, Icons.Outlined.AccountBalanceWallet, sub = "Switch, create or restore")
         }
-
-        Panel(title = "Appearance") {
-            Segmented(
-                listOf("Dark", "Light", "System"),
-                when (theme) {
-                    ThemeMode.DARK -> "Dark"
-                    ThemeMode.LIGHT -> "Light"
-                    ThemeMode.SYSTEM -> "System"
-                },
-                { choice ->
-                    vm.setTheme(
-                        when (choice) {
-                            "Light" -> ThemeMode.LIGHT
-                            "System" -> ThemeMode.SYSTEM
-                            else -> ThemeMode.DARK
-                        },
-                    )
-                },
-                Modifier.fillMaxWidth(),
-            )
-            SwitchRow("Animations", "Off also respects the system setting.", animations) { vm.setAnimations(it) }
+        SettingsGroup("Security") {
+            SettingRow("Recovery phrase", { onReveal("phrase") }, Icons.Outlined.Key, sub = "Your wallet's 24 words")
+            RowDivider()
+            SettingRow("View keys", { onReveal("viewkey") }, Icons.Outlined.Visibility, sub = "Choose what to share")
+            RowDivider()
+            SettingRow("Change PIN", onChangePin, Icons.Outlined.Lock)
+            RowDivider()
+            SwitchRow("Unlock with biometrics", null, biometric, Icons.Outlined.Fingerprint, onChange = onBiometric)
         }
-
-        Panel(title = "About") {
-            KeyValueRow("Version", version ?: "—")
-            SettingRow("zoka.network", null) { open("https://zoka.network") }
-            ThinDivider()
-            SettingRow("ZokaScan explorer", null) { open("https://zokascan.cc") }
-            ThinDivider()
-            SettingRow("Source code", null) { open("https://github.com/zoka-network/zkapriv") }
-            ThinDivider()
-            SettingRow("Privacy", null) { open("https://github.com/zoka-network/zkapriv/blob/zkapriv-v2/PRIVACY_POLICY_EN.md") }
-            HintText("Payments are private: amounts, senders and receivers are not public. The seeds you connect to see your IP unless Tor mode is on.")
+        HintText("Locks when you leave the app or after 5 minutes without use.", Modifier.padding(horizontal = 4.dp))
+        SettingsGroup("Network") {
+            SettingRow("Network & Tor", onNetwork, Icons.Outlined.Public, sub = "Connection and privacy")
         }
-
-        Panel(title = "Danger zone") {
-            if (sending.running) {
-                Notice("Wait until your payment finishes before removing the wallet.", tone = ZkTone.Warn)
-            } else {
-                Text(
-                    "Remove every wallet and setting from this phone. Only their 24 words bring them back.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Zk.colors.textMuted,
+        SettingsGroup("Appearance") {
+            Column(Modifier.padding(14.dp)) {
+                Segmented(
+                    listOf("Dark", "Light", "System"),
+                    when (theme) {
+                        ThemeMode.DARK -> "Dark"
+                        ThemeMode.LIGHT -> "Light"
+                        ThemeMode.SYSTEM -> "System"
+                    },
+                    { onTheme(when (it) { "Light" -> ThemeMode.LIGHT; "System" -> ThemeMode.SYSTEM; else -> ThemeMode.DARK }) },
+                    Modifier.fillMaxWidth(),
                 )
-                if (!confirmWipe) {
-                    ZButton({ confirmWipe = true }, Modifier.fillMaxWidth(), ZButtonVariant.Danger) {
-                        ZButtonText("Danger zone")
-                    }
-                } else {
-                    Notice("Did you write down the 24 words? Without them the coins are lost.", tone = ZkTone.Err)
-                    Row {
-                        ZButton({ confirmWipe = false }, Modifier.weight(1f), ZButtonVariant.Ghost) { ZButtonText("Cancel") }
-                        ZButton(
-                            { scope.launch { vm.wipe(); onWiped() } },
-                            Modifier.weight(1f),
-                            ZButtonVariant.Danger,
-                        ) { ZButtonText("Remove") }
-                    }
-                }
             }
+            RowDivider()
+            SwitchRow("Animations", "Respects reduced motion", animations, Icons.Outlined.Animation, onChange = onAnimations)
+        }
+        SettingsGroup("About") {
+            ValueRow("Version", version, Icons.Outlined.Info)
+            RowDivider()
+            SettingRow("zoka.network", { onOpen("https://zoka.network") }, external = true)
+            RowDivider()
+            SettingRow("ZokaScan explorer", { onOpen("https://zokascan.cc") }, external = true)
+            RowDivider()
+            SettingRow("Source code", { onOpen("https://github.com/zoka-network/zkapriv") }, external = true)
+            RowDivider()
+            SettingRow("Privacy", { onOpen("https://github.com/zoka-network/zkapriv/blob/main/PRIVACY_POLICY_EN.md") }, external = true)
+        }
+        SettingsGroup("Danger zone") {
+            SettingRow("Remove wallets", onReset, Icons.Outlined.DeleteOutline, sub = "From this phone", danger = true)
         }
         VSpace(8)
-    }
-}
-
-@Composable
-internal fun SettingRow(title: String, sub: String?, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, color = Zk.colors.text)
-            if (sub != null) Text(sub, style = MaterialTheme.typography.bodySmall, color = Zk.colors.textMuted)
-        }
-        Icon(Icons.Outlined.ChevronRight, null, tint = Zk.colors.textMuted)
-    }
-}
-
-@Composable
-internal fun SwitchRow(title: String, sub: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, color = Zk.colors.text)
-            if (sub != null) Text(sub, style = MaterialTheme.typography.bodySmall, color = Zk.colors.textMuted)
-        }
-        ZToggle(checked, onChange, description = title)
     }
 }
 
@@ -208,26 +163,14 @@ fun RevealScreen(vm: WalletViewModel, what: String, onBack: () -> Unit) {
 private fun WalletRevealScreen(vm: WalletViewModel, walletId: String, what: String, onBack: () -> Unit) {
     val context = LocalContext.current
     var unlocked by remember { mutableStateOf(false) }
-    var pin by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
     var viewScope by remember { mutableStateOf(ViewKeyScope.INCOMING) }
     var exportedKey by remember(viewScope) { mutableStateOf<String?>(null) }
     var exportError by remember(viewScope) { mutableStateOf<String?>(null) }
     val title = if (what == "phrase") "Recovery phrase" else "View keys"
     LaunchedEffect(Unit) {
         val activity = context as? FragmentActivity
-        if (vm.biometricEnabled() && activity != null) {
+        if (vm.biometricEnabled() && activity != null && vm.pinWaitMillis() == 0L) {
             authenticate(activity, "Show $title", "Confirm it is you", onSuccess = { unlocked = true })
-        }
-    }
-    LaunchedEffect(pin) {
-        if (pin.length == QuanticVault.PIN_LENGTH) {
-            when (val check = vm.checkPin(pin)) {
-                QuanticVault.PinCheck.Ok -> unlocked = true
-                is QuanticVault.PinCheck.Wrong -> error = "Wrong PIN."
-                is QuanticVault.PinCheck.Wait -> error = "Too many wrong PINs. Wait ${(check.millis + 999) / 1000} s."
-            }
-            pin = ""
         }
     }
     LaunchedEffect(unlocked, viewScope) {
@@ -244,22 +187,15 @@ private fun WalletRevealScreen(vm: WalletViewModel, walletId: String, what: Stri
     }
     if (!unlocked) {
         ZkScreen(title = title, onBack = onBack, scroll = false) {
-            Text("Enter your PIN", style = MaterialTheme.typography.bodyLarge, color = Zk.colors.textMuted)
-            Spacer(Modifier.weight(1f))
-            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                PinDots(pin.length, error = error != null && pin.isEmpty())
-                VSpace(12)
-                error?.let { ErrorText(it) }
-                VSpace(20)
-                PinPad(
-                    onDigit = {
-                        error = null
-                        if (pin.length < QuanticVault.PIN_LENGTH) pin += it
-                    },
-                    onDelete = { pin = pin.dropLast(1) },
-                )
-            }
-            VSpace(12)
+            PinPrompt(
+                title = "Enter your PIN",
+                check = vm::checkPin,
+                waitMillis = vm::pinWaitMillis,
+                onOk = { unlocked = true },
+                onBiometric = if (vm.biometricEnabled() && context is FragmentActivity) ({
+                    authenticate(context, "Show $title", "Confirm it is you", onSuccess = { unlocked = true })
+                }) else null,
+            )
         }
         return
     }
@@ -305,8 +241,6 @@ private fun WalletRevealScreen(vm: WalletViewModel, walletId: String, what: Stri
 @Composable
 fun ChangePinScreen(vm: WalletViewModel, onBack: () -> Unit, onDone: () -> Unit) {
     var verified by remember { mutableStateOf(false) }
-    var pin by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
     if (verified) {
         PinSetupScreen(onBack = onBack, onPinSet = {
             vm.setPin(it)
@@ -314,32 +248,12 @@ fun ChangePinScreen(vm: WalletViewModel, onBack: () -> Unit, onDone: () -> Unit)
         })
         return
     }
-    LaunchedEffect(pin) {
-        if (pin.length == QuanticVault.PIN_LENGTH) {
-            when (val check = vm.checkPin(pin)) {
-                QuanticVault.PinCheck.Ok -> verified = true
-                is QuanticVault.PinCheck.Wrong -> error = "Wrong PIN."
-                is QuanticVault.PinCheck.Wait -> error = "Too many wrong PINs. Wait ${(check.millis + 999) / 1000} s."
-            }
-            pin = ""
-        }
-    }
     ZkScreen(title = "Change PIN", onBack = onBack, scroll = false) {
-        Text("Enter your current PIN", style = MaterialTheme.typography.bodyLarge, color = Zk.colors.textMuted)
-        Spacer(Modifier.weight(1f))
-        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            PinDots(pin.length, error = error != null && pin.isEmpty())
-            VSpace(12)
-            error?.let { ErrorText(it) }
-            VSpace(20)
-            PinPad(
-                onDigit = {
-                    error = null
-                    if (pin.length < QuanticVault.PIN_LENGTH) pin += it
-                },
-                onDelete = { pin = pin.dropLast(1) },
-            )
-        }
-        VSpace(12)
+        PinPrompt(
+            title = "Enter your current PIN",
+            check = vm::checkPin,
+            waitMillis = vm::pinWaitMillis,
+            onOk = { verified = true },
+        )
     }
 }

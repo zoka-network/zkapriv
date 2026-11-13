@@ -26,23 +26,34 @@ import androidx.compose.ui.unit.sp
 import com.zoka.zkapriv.ui.R
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Sistema de diseño de ZKAPriv 3, portado del de ZSilent
-//  (zsilent-core/src/main/kotlin/com/zsilent/core/ui/theme/Theme.kt).
+//  Sistema de diseño de ZKAPriv 4.1: «negro y vidrio», el del home de
+//  zoka.network (zokaweb/src/index.css y components/zoka/home.css).
 //
-//  Reglas, las mismas que en escritorio:
+//  Reglas:
 //
 //  1. Ningún Color(0x…) fuera de este archivo. Las pantallas leen Zk.colors.
 //
-//  2. Los grises son neutros puros. En oscuro, fondo y superficies son casi
-//     iguales (#000000 / #020202 / #070707): lo que separa un panel es su
-//     borde de 1 dp, no el relleno.
+//  2. Negro profundo y piezas de vidrio. El vidrio no es desenfoque: es un
+//     degradé apenas más claro que el fondo, un borde de 1 dp más luminoso
+//     arriba y nada de sombra. Es barato en un teléfono de 32 bits.
 //
-//  3. El acento es el rosa de Zoka Quantic (#F2ABD0 sobre negro, el de
-//     zoka.network); en claro se oscurece a #A8326A para que se lea. Fuera del
-//     acento, el color solo dice estado: éxito, aviso, peligro.
+//  3. Los botones principales y lo elegido (pestaña, pastilla, interruptor)
+//     son negros con letras rosa suave, EN LOS DOS TEMAS: `ink` y `onInk`. En
+//     oscuro el negro es de vidrio con borde rosa fino; en claro es sólido
+//     sobre la página blanca. No hay botones rellenos de rosa.
 //
-//  4. Inter para la interfaz y JetBrains Mono para todo dato: montos,
-//     direcciones, alturas, hashes.
+//  4. El rosa es solo detalle. Sobre la página se usa `accent` (#F2ABD0 en
+//     oscuro; en claro #A8326A, que se lee a 6:1 sobre blanco); sobre negro,
+//     `onInk`. Fuera del rosa, el color solo dice estado: éxito, aviso,
+//     peligro.
+//
+//  5. Inter para la interfaz (Light para las bajadas, como en la web) y
+//     JetBrains Mono para todo dato y para etiquetas, eyebrows y botones en
+//     mayúscula.
+//
+//  6. Cápsula para botones, pastillas, segmentado y barra inferior; 28 dp las
+//     tarjetas principales, 20 dp las demás, 16 dp campos y avisos, 12 dp
+//     recuadros y casillas.
 //
 //  El Material 3 de este proyecto (BOM 2023.10) no tiene los roles
 //  surfaceContainer*, así que las superficies viajan en ZkColors.
@@ -52,18 +63,45 @@ import com.zoka.zkapriv.ui.R
 data class ZkColors(
     val dark: Boolean,
     val background: Color,
-    /** Paneles. */
+    /** Base de las tarjetas. */
     val surface: Color,
-    /** Campos, botones y filas por encima de un panel. */
+    /** Campos, casillas y recuadros por encima de una tarjeta. */
     val surface2: Color,
-    /** Diálogos y lo que se apoya encima de todo. */
+    /** Hojas y diálogos. */
     val elevated: Color,
     val border: Color,
     val borderStrong: Color,
     val text: Color,
+    /** Cuerpo de texto: un escalón más suave que `text`. */
+    val textSoft: Color,
+    /** Etiquetas y texto secundario. */
     val textMuted: Color,
+    /** Placeholders. Sigue leyéndose a más de 4,5:1. */
+    val textFaint: Color,
+    /** Rosa sobre la página: puntito, ícono activo, ZKA, PIN. */
     val accent: Color,
+    /** Letras rosa sobre la página: enlaces y eyebrows. */
+    val accentSoft: Color,
+    /** Borde rosa fino: foco, pastilla de estado. */
+    val accentLine: Color,
+    /** Fondo rosa muy tenue. */
+    val accentWash: Color,
     val onAccent: Color,
+    /** Relleno (de arriba abajo) de los botones principales y de lo elegido. */
+    val ink: List<Color>,
+    val inkPressed: List<Color>,
+    val inkLine: Color,
+    /** Letras sobre `ink`: rosa suave en los dos temas. */
+    val onInk: Color,
+    /** Degradé de las tarjetas de vidrio, de arriba a la izquierda hacia abajo. */
+    val glass: List<Color>,
+    /** Borde de una tarjeta, de arriba abajo: más luminoso arriba. */
+    val glassEdge: List<Color>,
+    /** Lo mismo para la tarjeta principal de una pantalla. */
+    val heroEdge: List<Color>,
+    /** Relleno de las cápsulas neutras: botón secundario, pastillas, teclas. */
+    val capsule: List<Color>,
+    val capsulePressed: List<Color>,
     val success: Color,
     val warning: Color,
     val danger: Color,
@@ -73,47 +111,81 @@ data class ZkColors(
     val qrLight: Color = Color(0xFFFFFFFF),
 )
 
-/** Rosa de marca sobre fondo oscuro. */
+/** Rosa de marca sobre fondo oscuro: el de zoka.network. */
 private val QuanticPink = Color(0xFFF2ABD0)
-/** Texto sobre el rosa: el casi negro cálido del botón de zoka.network. */
-private val QuanticOnPink = Color(0xFF0A0709)
-/** Rosa de marca en claro: 6,1:1 sobre el fondo. */
+/** El de los enlaces de la web: un punto más apagado, para letras. */
+private val QuanticPinkSoft = Color(0xFFE8BDD5)
+/** Rosa de marca sobre blanco: 6,3:1. */
 private val QuanticPinkDeep = Color(0xFFA8326A)
+/** El negro de los botones del tema claro. */
+private val Ink = Color(0xFF0A0A0B)
 
 val ZkDark = ZkColors(
     dark = true,
     background = Color(0xFF000000),
-    surface = Color(0xFF020202),
-    surface2 = Color(0xFF070707),
-    elevated = Color(0xFF0F0F0F),
-    border = Color(0xFF1B1B1B),
-    borderStrong = Color(0xFF333333),
-    text = Color(0xFFF8F8F8),
-    textMuted = Color(0xFF868686),
+    surface = Color(0xFF050506),
+    surface2 = Color(0xFF0B0B0D),
+    elevated = Color(0xFF111114),
+    border = Color(0x1FFFFFFF),
+    borderStrong = Color(0x40FFFFFF),
+    text = Color(0xFFFAFAFA),
+    textSoft = Color(0xFFB4B4BA),
+    textMuted = Color(0xFF8B8B92),
+    textFaint = Color(0xFF7C7C84),
     accent = QuanticPink,
-    onAccent = QuanticOnPink,
+    accentSoft = QuanticPinkSoft,
+    accentLine = Color(0x73F2ABD0),
+    accentWash = Color(0x14F2ABD0),
+    onAccent = Color(0xFF0A0709),
+    // Blanco al 8 % y al 1,5 % sobre negro, ya compuesto.
+    ink = listOf(Color(0xFF141414), Color(0xFF040404)),
+    // Con un velo rosa: se nota que se apretó.
+    inkPressed = listOf(Color(0xFF22181D), Color(0xFF0F0A0C)),
+    inkLine = Color(0x80F2ABD0),
+    onInk = QuanticPinkSoft,
+    // Blanco al 7 %, 1,5 % y 3,5 % sobre #050506, ya compuesto.
+    glass = listOf(Color(0xFF161617), Color(0xFF09090A), Color(0xFF0E0E0F)),
+    glassEdge = listOf(Color(0x42FFFFFF), Color(0x1AFFFFFF)),
+    heroEdge = listOf(Color(0x57FFFFFF), Color(0x24FFFFFF)),
+    capsule = listOf(Color(0xFF141414), Color(0xFF040404)),
+    capsulePressed = listOf(Color(0xFF222222), Color(0xFF0E0E0E)),
     success = Color(0xFF6CD092),
     warning = Color(0xFFEFCA61),
     danger = Color(0xFFFF645F),
-    info = Color(0xFFA7AEBB),
+    info = Color(0xFFA1A1A8),
 )
 
 val ZkLight = ZkColors(
     dark = false,
-    background = Color(0xFFFCFCFC),
-    surface = Color(0xFFF5F5F5),
-    surface2 = Color(0xFFEBEBEB),
+    background = Color(0xFFFFFFFF),
+    surface = Color(0xFFFAFAFA),
+    surface2 = Color(0xFFF4F4F5),
     elevated = Color(0xFFFFFFFF),
-    border = Color(0xFFD7D7D7),
-    borderStrong = Color(0xFFB7B7B7),
-    text = Color(0xFF090909),
-    textMuted = Color(0xFF555555),
+    border = Color(0x1A000000),
+    borderStrong = Color(0x33000000),
+    text = Ink,
+    textSoft = Color(0xFF3F3F46),
+    textMuted = Color(0xFF63636B),
+    textFaint = Color(0xFF6E6E76),
     accent = QuanticPinkDeep,
+    accentSoft = QuanticPinkDeep,
+    accentLine = Color(0x66A8326A),
+    accentWash = Color(0x12A8326A),
     onAccent = Color(0xFFFFFFFF),
-    success = Color(0xFF0FA05C),
-    warning = Color(0xFFCF9B00),
+    ink = listOf(Ink, Ink),
+    inkPressed = listOf(Color(0xFF2A2A2E), Color(0xFF2A2A2E)),
+    inkLine = Ink,
+    onInk = QuanticPink,
+    glass = listOf(Color(0xFFFFFFFF), Color(0xFFFAFAFB), Color(0xFFF6F6F7)),
+    glassEdge = listOf(Color(0x1A000000), Color(0x1A000000)),
+    heroEdge = listOf(Color(0x24000000), Color(0x24000000)),
+    capsule = listOf(Color(0xFFFFFFFF), Color(0xFFFFFFFF)),
+    capsulePressed = listOf(Color(0xFFEFEFF1), Color(0xFFEFEFF1)),
+    // Más oscuros que en la 4.0: como texto sobre blanco pasan de 4,5:1.
+    success = Color(0xFF0B7A46),
+    warning = Color(0xFF8A6100),
     danger = Color(0xFFD73337),
-    info = Color(0xFF6B727E),
+    info = Color(0xFF63636B),
 )
 
 /** Lo que leen los componentes de Material que todavía se usan. */
@@ -121,7 +193,7 @@ private fun ZkColors.scheme(): ColorScheme =
     (if (dark) darkColorScheme() else lightColorScheme()).copy(
         primary = accent,
         onPrimary = onAccent,
-        primaryContainer = border,
+        primaryContainer = surface2,
         onPrimaryContainer = text,
         inversePrimary = accent,
         secondary = surface2,
@@ -130,7 +202,7 @@ private fun ZkColors.scheme(): ColorScheme =
         onSecondaryContainer = text,
         tertiary = info,
         onTertiary = background,
-        tertiaryContainer = border,
+        tertiaryContainer = surface2,
         onTertiaryContainer = text,
         background = background,
         onBackground = text,
@@ -148,12 +220,13 @@ private fun ZkColors.scheme(): ColorScheme =
         onErrorContainer = danger,
         outline = borderStrong,
         outlineVariant = border,
-        scrim = background.copy(alpha = 0.6f),
+        scrim = Color(0x99000000),
     )
 
 // ── Tipografía ───────────────────────────────────────────────────────────────
 
 val InterFamily = FontFamily(
+    Font(R.font.inter_light, FontWeight.Light),
     Font(R.font.inter_regular, FontWeight.Normal),
     Font(R.font.inter_medium, FontWeight.Medium),
     Font(R.font.inter_semibold, FontWeight.SemiBold),
@@ -167,18 +240,26 @@ val MonoFamily = FontFamily(
 /** Alternativas de Inter que usa el diseño. */
 private const val INTER_FEATURES = "ss01, cv11"
 
+/** Inter con cifras de ancho fijo: el saldo no baila al cambiar. */
+private const val INTER_NUMBERS = "ss01, cv11, tnum"
+
 /** Cifras de ancho fijo y cero barrado: obligatorio en datos. */
 private const val MONO_FEATURES = "tnum, zero"
 
-private fun inter(size: Int, weight: FontWeight, lineHeight: Int, tracking: Float = 0f) =
-    TextStyle(
-        fontFamily = InterFamily,
-        fontWeight = weight,
-        fontSize = size.sp,
-        lineHeight = lineHeight.sp,
-        letterSpacing = tracking.sp,
-        fontFeatureSettings = INTER_FEATURES,
-    )
+private fun inter(
+    size: Int,
+    weight: FontWeight,
+    lineHeight: Int,
+    tracking: Float = 0f,
+    features: String = INTER_FEATURES,
+) = TextStyle(
+    fontFamily = InterFamily,
+    fontWeight = weight,
+    fontSize = size.sp,
+    lineHeight = lineHeight.sp,
+    letterSpacing = tracking.sp,
+    fontFeatureSettings = features,
+)
 
 private fun mono(size: Int, weight: FontWeight, lineHeight: Int, tracking: Float = 0f) =
     TextStyle(
@@ -190,22 +271,25 @@ private fun mono(size: Int, weight: FontWeight, lineHeight: Int, tracking: Float
         fontFeatureSettings = MONO_FEATURES,
     )
 
-// En el teléfono el cuerpo sube un punto respecto de escritorio: se lee a
-// más distancia y con el dedo encima.
+// Los títulos van apretados (−0,03 em), como en la web. Están todos los
+// estilos de Material: uno sin definir caería en la fuente del sistema, que
+// es lo que le pasaba al saldo del inicio.
 private val ZkTypography = Typography(
-    displaySmall = inter(36, FontWeight.SemiBold, 40, -0.5f),
-    headlineLarge = inter(30, FontWeight.SemiBold, 34, -0.4f),
-    headlineMedium = inter(24, FontWeight.SemiBold, 28, -0.3f),
-    headlineSmall = inter(20, FontWeight.SemiBold, 26, -0.2f),
-    titleLarge = inter(17, FontWeight.SemiBold, 22, -0.2f),
-    titleMedium = inter(15, FontWeight.SemiBold, 20),
+    displayLarge = inter(46, FontWeight.SemiBold, 48, -2f),
+    displayMedium = inter(40, FontWeight.SemiBold, 44, -1.6f),
+    displaySmall = inter(36, FontWeight.SemiBold, 40, -1.2f),
+    headlineLarge = inter(32, FontWeight.SemiBold, 36, -1f),
+    headlineMedium = inter(28, FontWeight.SemiBold, 32, -0.8f),
+    headlineSmall = inter(24, FontWeight.SemiBold, 28, -0.6f),
+    titleLarge = inter(20, FontWeight.SemiBold, 26, -0.4f),
+    titleMedium = inter(16, FontWeight.Medium, 22, -0.1f),
     titleSmall = inter(14, FontWeight.Medium, 18),
     bodyLarge = inter(15, FontWeight.Normal, 22),
     bodyMedium = inter(14, FontWeight.Normal, 20),
     bodySmall = inter(12, FontWeight.Normal, 17),
-    labelLarge = inter(13, FontWeight.Medium, 16, 0.5f),
-    labelMedium = inter(12, FontWeight.Medium, 15, 0.5f),
-    labelSmall = inter(11, FontWeight.Medium, 14, 0.5f),
+    labelLarge = inter(13, FontWeight.Medium, 16),
+    labelMedium = inter(12, FontWeight.Medium, 15),
+    labelSmall = inter(11, FontWeight.Medium, 14),
 )
 
 /**
@@ -214,55 +298,75 @@ private val ZkTypography = Typography(
  */
 @Immutable
 data class ZkTextStyles(
-    /** Eyebrow de sección, en rosa. 10 sp / 0,28 em. */
+    /** Eyebrow de sección. 10 sp / 0,24 em. */
     val eyebrow: TextStyle,
-    /** Título de panel. 11 sp / 0,18 em. */
+    /** Título de panel. 10 sp / 0,2 em. */
     val panelLabel: TextStyle,
     /** Etiqueta de campo y de Stat. 10 sp / 0,18 em. */
     val fieldLabel: TextStyle,
     val pill: TextStyle,
+    /** Texto de botón. 12 sp / 0,14 em. */
+    val button: TextStyle,
     val mono: TextStyle,
     val monoLarge: TextStyle,
-    /** El saldo principal. */
+    /** Un monto destacado dentro de una tarjeta. */
     val monoDisplay: TextStyle,
+    /** El saldo del inicio: Inter, cifras de ancho fijo. */
+    val balance: TextStyle,
+    /** Las cifras del teclado del PIN. */
+    val key: TextStyle,
     /** ZOKA QUANTIC grande, como el h1 de zoka.network. */
     val brandHero: TextStyle,
+    /** La marca chica en mono: `ZOKA QUANTIC` con mucho aire. */
+    val brandMark: TextStyle,
     val brandTagline: TextStyle,
+    /** Bajada en Inter Light, como el cuerpo de la web. */
+    val lead: TextStyle,
 )
 
 private val ZkText = ZkTextStyles(
-    eyebrow = mono(10, FontWeight.Medium, 14, 2.8f),
-    panelLabel = mono(11, FontWeight.Medium, 15, 1.98f),
+    eyebrow = mono(10, FontWeight.Medium, 14, 2.4f),
+    panelLabel = mono(10, FontWeight.Medium, 14, 2f),
     fieldLabel = mono(10, FontWeight.Medium, 14, 1.8f),
-    pill = mono(10, FontWeight.Medium, 14, 0.5f),
+    pill = mono(10, FontWeight.Medium, 14, 0.8f),
+    button = mono(12, FontWeight.Medium, 16, 1.7f),
     mono = mono(13, FontWeight.Normal, 19),
     monoLarge = mono(20, FontWeight.Normal, 24),
-    monoDisplay = mono(34, FontWeight.Medium, 40),
-    brandHero = inter(40, FontWeight.Medium, 42, -2f),
-    brandTagline = inter(22, FontWeight.Normal, 27, -0.55f),
+    monoDisplay = inter(38, FontWeight.SemiBold, 42, -1.6f, INTER_NUMBERS),
+    balance = inter(52, FontWeight.SemiBold, 54, -2.3f, INTER_NUMBERS),
+    key = inter(26, FontWeight.Normal, 30, 0f, INTER_NUMBERS),
+    brandHero = inter(46, FontWeight.SemiBold, 46, -2.1f),
+    brandMark = mono(11, FontWeight.Normal, 14, 4.6f),
+    brandTagline = inter(24, FontWeight.Light, 29, -0.5f),
+    lead = inter(15, FontWeight.Light, 24),
 )
 
 // ── Formas y medidas ─────────────────────────────────────────────────────────
-// Tres radios y nada pasa de 10 dp salvo lo que es redondo (puntos, switches).
+// Lo que no es cápsula (CircleShape) sale de acá.
 
 private val ZkShapes = Shapes(
-    extraSmall = RoundedCornerShape(4.dp),
-    small = RoundedCornerShape(6.dp),
-    medium = RoundedCornerShape(10.dp),
-    large = RoundedCornerShape(10.dp),
-    extraLarge = RoundedCornerShape(10.dp),
+    /** Detalles: barritas, el recuadro de enfoque. */
+    extraSmall = RoundedCornerShape(8.dp),
+    /** Recuadros de ícono y casillas. */
+    small = RoundedCornerShape(12.dp),
+    /** Campos, avisos y la placa del QR. */
+    medium = RoundedCornerShape(16.dp),
+    /** Tarjetas. */
+    large = RoundedCornerShape(20.dp),
+    /** La tarjeta principal de una pantalla, hojas y diálogos. */
+    extraLarge = RoundedCornerShape(28.dp),
 )
 
 @Immutable
 data class ZkSpacing(
-    /** Relleno de un panel. */
+    /** Relleno de una tarjeta. */
     val panel: Dp = 16.dp,
-    /** Entre paneles y entre bloques de un panel. */
+    /** Entre tarjetas y entre bloques de una tarjeta. */
     val gap: Dp = 12.dp,
     /** Relleno vertical de una fila. */
     val row: Dp = 10.dp,
-    /** Alto de campos y botones: 48 dp, lo mínimo para el dedo. */
-    val control: Dp = 48.dp,
+    /** Alto de campos y del botón mediano. */
+    val control: Dp = 50.dp,
     /** Margen lateral de la pantalla. */
     val screen: Dp = 16.dp,
 )

@@ -1,5 +1,19 @@
 # Hoja de Ruta Tecnica - zkapriv Android
 
+## 13/11/2026: ZKAPriv 4.1.0, rediseño negro y vidrio
+
+Rama `rediseno-vidrio`, continuada por Codex donde se cortó Claude. Se
+completan todas las pantallas con botones negros y letras rosa en los dos
+temas, selector de direcciones con un solo QR, restauración de 24 casillas,
+PIN compartido, Reset unificado y ajustes en grupos. Se conserva la red v3
+y la navegación de cinco pestañas.
+
+Versión 4.1.0, código 20, variante **ZKAPriv Testnet** instalada en el
+Samsung SM-A135M. Pasan 75 pruebas JVM y 5 instrumentadas; la revisión usa
+datos ficticios. Plan y evidencia en [PLAN-REDISENO-4.1.md](docs/PLAN-REDISENO-4.1.md)
+y [VALIDACION-4.1.0.md](docs/VALIDACION-4.1.0.md).
+No se integra a `main` ni se publica: sigue vigente la release 4.0.0.
+
 > **ZKAPriv 3 (30/10/2026 en adelante):** la app pasa a Zoka Quantic Testnet v2
 > (STARK) con el diseno de ZSilent. Lo vigente esta en
 > [docs/PLAN-ZKAPRIV-3.md](docs/PLAN-ZKAPRIV-3.md) (plan y etapas),

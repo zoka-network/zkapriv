@@ -77,18 +77,18 @@ fun ZkGallery(dark: Boolean, onToggleTheme: () -> Unit) {
             }
             QuanticWordmark(Zk.text.brandHero)
             Text("Private by design.", style = Zk.text.brandTagline, color = Zk.colors.textMuted)
-            SectionTitle("Gallery", "ZKAPriv 3 components", "Every primitive, in the current theme.")
+            SectionTitle("Gallery", "ZKAPriv 4.1 components", "Every primitive, in the current theme.")
 
             Panel(title = "Buttons") {
                 ZButton(onClick = {}, Modifier.fillMaxWidth(), variant = ZButtonVariant.Primary, size = ZButtonSize.Large) {
                     ZButtonText("Send ZKA")
                 }
-                ZButton(onClick = {}, Modifier.fillMaxWidth(), variant = ZButtonVariant.Accent) {
+                ZButton(onClick = {}, Modifier.fillMaxWidth(), variant = ZButtonVariant.Secondary) {
                     ZButtonText("Create wallet")
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ZButton(onClick = {}, Modifier.weight(1f)) { ZButtonText("Default") }
-                    ZButton(onClick = {}, Modifier.weight(1f), variant = ZButtonVariant.Outline) { ZButtonText("Outline") }
+                    ZButton(onClick = {}, Modifier.weight(1f)) { ZButtonText("Glass") }
+                    ZButton(onClick = {}, Modifier.weight(1f), variant = ZButtonVariant.Secondary) { ZButtonText("Back") }
                     ZButton(onClick = {}, Modifier.weight(1f), variant = ZButtonVariant.Ghost) { ZButtonText("Ghost") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

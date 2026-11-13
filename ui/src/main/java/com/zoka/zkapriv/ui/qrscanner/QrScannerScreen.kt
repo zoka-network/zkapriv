@@ -56,6 +56,7 @@ import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.shouldShowRationale
 import com.zoka.zkapriv.ui.components.MeterBar
+import com.zoka.zkapriv.ui.components.GlassIconButton
 import com.zoka.zkapriv.ui.components.Notice
 import com.zoka.zkapriv.ui.components.Pill
 import com.zoka.zkapriv.ui.components.ZButton
@@ -105,21 +106,20 @@ fun QrScannerScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(c.background)
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
         Row(
-            Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp),
+            Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onNavigateBack) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back", tint = Color.White)
-            }
+            GlassIconButton(Icons.Outlined.ArrowBack, "Back", onNavigateBack)
+            Spacer(Modifier.width(12.dp))
             Text(
                 "Scan to pay",
                 style = MaterialTheme.typography.titleLarge,
-                color = Color.White,
+                color = c.text,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -242,23 +242,12 @@ fun ScannerOverlayPreview() {
 /** La linterna, abajo y a mano. */
 @Composable
 private fun TorchButton(on: Boolean, onToggle: () -> Unit) {
-    val accent = Zk.colors.accent
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Box(
-            Modifier
-                .size(52.dp)
-                .clip(CircleShape)
-                .background(if (on) accent else Color.White.copy(alpha = 0.12f))
-                .border(1.dp, if (on) accent else Color.White.copy(alpha = 0.35f), CircleShape)
-                .clickable(onClick = onToggle),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                if (on) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
-                contentDescription = if (on) "Turn the light off" else "Turn the light on",
-                tint = if (on) Zk.colors.onAccent else Color.White
-            )
-        }
+        GlassIconButton(
+            if (on) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
+            if (on) "Turn the light off" else "Turn the light on",
+            onToggle, modifier = Modifier.size(52.dp), selected = on,
+        )
         Text(if (on) "Light on" else "Light", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.8f))
     }
 }

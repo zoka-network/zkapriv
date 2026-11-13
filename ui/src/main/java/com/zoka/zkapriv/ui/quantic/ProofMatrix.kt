@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -28,6 +29,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.zoka.zkapriv.ui.theme.Zk
+import com.zoka.zkapriv.ui.components.zkGlass
 import kotlinx.coroutines.delay
 import kotlin.random.Random
 
@@ -58,8 +60,7 @@ internal fun ProofMatrix(result: ProofResult, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         Box(
             Modifier.widthIn(max = 264.dp).fillMaxWidth().aspectRatio(1f)
-                .border(1.dp, ink.copy(alpha = .30f), RoundedCornerShape(10.dp))
-                .background(colors.surface2, RoundedCornerShape(10.dp))
+                .zkGlass(MaterialTheme.shapes.extraLarge, hero = true)
                 .padding(14.dp).semantics { contentDescription = description },
             contentAlignment = Alignment.Center,
         ) {
@@ -75,7 +76,7 @@ internal fun ProofMatrix(result: ProofResult, modifier: Modifier = Modifier) {
             if (result != ProofResult.Working) {
                 Icon(if (result == ProofResult.Accepted) Icons.Rounded.Check else Icons.Rounded.Close,
                     contentDescription = null, tint = ink,
-                    modifier = Modifier.size(112.dp).background(colors.surface2, RoundedCornerShape(12.dp)).padding(12.dp))
+                    modifier = Modifier.size(112.dp).background(colors.surface2, MaterialTheme.shapes.large).padding(12.dp))
             }
         }
     }

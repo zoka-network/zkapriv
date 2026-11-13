@@ -58,7 +58,7 @@ internal fun NetworkContent(state: QuanticState, tor: Boolean, onBack: () -> Uni
                 "Tor mode",
                 "Reach the network only through Tor, to the onion seeds. Slower; your IP stays hidden.",
                 tor,
-                onTor,
+                onChange = onTor,
             )
             if (tor) {
                 Notice(
