@@ -2,30 +2,32 @@ package com.zoka.zkapriv.ui.quantic
 
 import android.graphics.Paint
 import android.graphics.Typeface
+import androidx.compose.animation.core.withInfiniteAnimationFrameMillis
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -37,79 +39,84 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.zoka.zkapriv.network.quantic.QuanticState
 import com.zoka.zkapriv.ui.avatar.ZKAPrivAvatar
-import com.zoka.zkapriv.ui.theme.InterFamily
 import com.zoka.zkapriv.ui.theme.DashboardGain
+import com.zoka.zkapriv.ui.theme.InterFamily
 import com.zoka.zkapriv.ui.theme.Zk
+import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
 
 @Composable
-fun HomeScreen(vm: WalletViewModel, onWallets: () -> Unit, onSettings: () -> Unit,
-    onNetwork: () -> Unit, onSendProgress: () -> Unit) {
+fun HomeScreen(vm: WalletViewModel, onWallets: () -> Unit, onSettings: () -> Unit, onSendProgress: () -> Unit) {
     val state by vm.state.collectAsState()
     val send by vm.sendState.collectAsState()
     val wallets by vm.wallets.collectAsState()
     val active by vm.activeWallet.collectAsState()
     val entry = wallets.firstOrNull { it.id == active }
-    HomeContent(state, send.running, entry?.name ?: "Wallet", onWallets, onSettings,
-        onNetwork, onSendProgress, entry?.publicAccountId.orEmpty())
+    HomeContent(state, send.running, entry?.name ?: "Wallet", onWallets, onSettings, onSendProgress,
+        entry?.publicAccountId.orEmpty())
 }
 
-/** Composición de la referencia: cuenta, saldo, curva y anillo con el mosaico plano. */
+/**
+ * El inicio, limpio: la cuenta arriba, el saldo y la curva de los movimientos
+ * con el degradé y la lluvia de dígitos encima de la línea. Los datos de la
+ * red (el anillo) se abren en una hoja desde la barra de abajo.
+ */
 @Composable
 internal fun HomeContent(state: QuanticState, sending: Boolean, walletName: String,
-    onWallets: () -> Unit, onSettings: () -> Unit, onNetwork: () -> Unit,
-    onSendProgress: () -> Unit, accountId: String = "") {
+    onWallets: () -> Unit, onSettings: () -> Unit, onSendProgress: () -> Unit, accountId: String = "") {
     val c = Zk.colors
     var hidden by rememberSaveable { mutableStateOf(false) }
-    val history = remember(state.balanceAtoms, state.history, state.inSync, state.pendingTxid) {
-        if (state.inSync && state.pendingTxid == null) balanceHistory(state.balanceAtoms, state.history) else null
+    val history = remember(state.loaded, state.balanceAtoms, state.history) {
+        if (state.loaded) balanceHistory(state.balanceAtoms, state.history) else null
     }
     Box(Modifier.fillMaxSize().background(c.background)) {
-        MatrixBackdrop(Modifier.fillMaxWidth().height(270.dp))
-        BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding()) {
-            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight)) {
-                Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f)) { AccountChip(walletName, accountId, onWallets, Modifier) }
-                    Spacer(Modifier.width(12.dp))
-                    Box(Modifier.size(52.dp).clip(CircleShape).clickable(role = Role.Button, onClick = onSettings),
-                        contentAlignment = Alignment.Center) {
-                        Icon(Icons.Outlined.Settings, "Settings", Modifier.size(32.dp), tint = c.text)
-                    }
+        // Sin datos o con el saldo oculto, la línea queda plana: nunca se inventa una forma.
+        BalanceBackdrop(if (hidden) null else history?.balances, Modifier.fillMaxSize().testTag("home-curve"))
+        Column(Modifier.fillMaxSize().statusBarsPadding()) {
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 10.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) { AccountChip(walletName, accountId, onWallets) }
+                Spacer(Modifier.width(12.dp))
+                Box(Modifier.size(48.dp).clip(CircleShape).clickable(role = Role.Button, onClick = onSettings),
+                    contentAlignment = Alignment.Center) {
+                    Icon(Icons.Outlined.Settings, "Settings", Modifier.size(28.dp), tint = c.text)
                 }
-                DashboardBalance(state, hidden, history) { hidden = !hidden }
-                BalanceCurve(if (hidden) null else history, Modifier.fillMaxWidth().height(84.dp))
-                Spacer(Modifier.height(12.dp))
-                NetworkRing(state, accountId, onNetwork)
-                if (sending || state.pendingTxid != null) {
-                    Box(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) { PendingStrip(sending, onSendProgress) }
-                }
-                Spacer(Modifier.weight(1f))
-                Spacer(Modifier.height(20.dp))
+            }
+            // El saldo queda sobre la curva, que la dibuja el fondo (ver CURVE_TOP).
+            Spacer(Modifier.weight(0.42f))
+            DashboardBalance(state, hidden, history) { hidden = !hidden }
+            Spacer(Modifier.weight(1.58f))
+            if (sending || state.pendingTxid != null) {
+                Box(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) { PendingStrip(sending, onSendProgress) }
             }
         }
     }
 }
 
+/** La cuenta, fina como en la referencia: ícono de billetera, nombre y dirección corta. */
 @Composable
-private fun AccountChip(name: String, accountId: String, onClick: () -> Unit, modifier: Modifier) {
+private fun AccountChip(name: String, accountId: String, onClick: () -> Unit) {
     val c = Zk.colors
-    Row(modifier.widthIn(max = 270.dp).border(1.dp, c.textSoft, CircleShape).clip(CircleShape)
-        .clickable(role = Role.Button, onClick = onClick).padding(horizontal = 12.dp, vertical = 8.dp),
+    Row(Modifier.widthIn(max = 250.dp).border(1.dp, c.textSoft.copy(alpha = 0.7f), CircleShape).clip(CircleShape)
+        .clickable(role = Role.Button, onClick = onClick).padding(start = 14.dp, end = 10.dp, top = 4.dp, bottom = 4.dp)
+        .testTag("account-chip"),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        ZKAPrivAvatar(accountId, Modifier.size(32.dp))
+        DashboardNavIcon("home", c.text, Modifier.size(18.dp))
         Column(Modifier.weight(1f, fill = false)) {
-            Text(name, color = c.text, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 18.sp,
+            Text(name, color = c.text, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 15.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(if (accountId.isEmpty()) "Loading address…" else accountId.take(7) + "…" + accountId.takeLast(4),
-                color = c.textSoft, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1)
+                color = c.textSoft, fontSize = 10.5.sp, lineHeight = 12.sp, maxLines = 1)
         }
-        Icon(Icons.Outlined.ExpandMore, "Change wallet", tint = c.text, modifier = Modifier.size(22.dp))
+        Icon(Icons.Outlined.ExpandMore, "Change wallet", tint = c.text, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -117,140 +124,255 @@ private fun AccountChip(name: String, accountId: String, onClick: () -> Unit, mo
 private fun DashboardBalance(state: QuanticState, hidden: Boolean, history: BalanceHistory?, onToggle: () -> Unit) {
     val c = Zk.colors
     val amount = when { hidden -> "••••••"; !state.loaded -> "—"; else -> displayZka(state.balanceAtoms) }
-    Column(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    // Un halo del color del fondo detrás del saldo: la lluvia pasa por atrás sin tapar los números.
+    val halo = c.background
+    Column(Modifier.fillMaxWidth().drawBehind {
+        val radius = size.height * 0.9f
+        scale(scaleX = size.width * 0.62f / radius, scaleY = 1.15f, pivot = center) {
+            drawCircle(Brush.radialGradient(listOf(halo.copy(alpha = 0.92f), halo.copy(alpha = 0.6f), halo.copy(alpha = 0f)),
+                center, radius), radius, center)
+        }
+    }, horizontalAlignment = Alignment.CenterHorizontally) {
         BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 18.dp).clip(CircleShape)
             .clickable(role = Role.Button, onClick = onToggle)
             .semantics { contentDescription = if (hidden) "Show balance" else "Hide balance" }) {
             val fontScale = LocalDensity.current.fontScale
-            val fontSize = (maxWidth.value / ((amount.length + 3) * 0.64f) / fontScale).coerceIn(18f, 36f)
+            val fontSize = (maxWidth.value / ((amount.length + 3) * 0.64f) / fontScale).coerceIn(18f, 38f)
             Text(buildAnnotatedString {
                 withStyle(SpanStyle(fontSize = fontSize.sp, fontWeight = FontWeight.Bold)) { append(amount) }
                 withStyle(SpanStyle(fontSize = (fontSize * 0.72f).sp, fontWeight = FontWeight.Bold)) { append(" ZKA") }
             }, Modifier.fillMaxWidth(), color = c.text, fontFamily = InterFamily, textAlign = TextAlign.Center,
                 maxLines = 1, softWrap = false, fontSize = fontSize.sp, lineHeight = (fontSize * 1.15f).sp)
         }
-        Spacer(Modifier.height(5.dp))
-        val change = history?.change ?: 0
-        val sign = if (change >= 0) "+" else "−"
-        if (history != null && !hidden) {
+        // La variación solo con movimientos reales: sin ellos no hay nada que comparar.
+        if (history != null && history.balances.size > 1 && !hidden) {
+            val change = history.change
+            val sign = if (change >= 0) "+" else "−"
             Text(buildAnnotatedString {
-                withStyle(SpanStyle(color = if (change < 0) c.danger else if (c.dark) DashboardGain else c.success, fontWeight = FontWeight.SemiBold)) {
+                withStyle(SpanStyle(color = if (change < 0) c.danger else if (c.dark) DashboardGain else c.success,
+                    fontWeight = FontWeight.SemiBold)) {
                     append(if (change >= 0) "↗ " else "↘ ")
                     history.percent?.let { append(String.format(Locale.US, "%.2f%%  ", abs(it))) }
                     Unit
                 }
                 withStyle(SpanStyle(color = c.textSoft)) { append("($sign${displayZka(abs(change))} ZKA)") }
-            }, fontSize = 15.sp, lineHeight = 19.sp, maxLines = 1)
+            }, fontSize = 15.sp, lineHeight = 19.sp, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
         }
-        Text(if (hidden) "Balance hidden" else if (history != null) "Recent activity" else "Private balance",
-            color = c.textMuted, fontSize = 10.sp, lineHeight = 13.sp, modifier = Modifier.padding(top = 3.dp))
         if (!hidden && state.loaded && (state.immatureAtoms > 0 || state.reservedAtoms > 0)) {
             Text(listOfNotNull(
                 state.immatureAtoms.takeIf { it > 0 }?.let { "${displayZka(it)} maturing" },
                 state.reservedAtoms.takeIf { it > 0 }?.let { "${displayZka(it)} pending" },
             ).joinToString(" · "), color = c.textMuted, fontSize = 10.sp, lineHeight = 13.sp, textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 20.dp))
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 3.dp))
         }
     }
 }
 
-/** Curva de los movimientos disponibles; sin puntos inventados ni cotización de mercado. */
-@Composable
-private fun BalanceCurve(history: BalanceHistory?, modifier: Modifier) {
-    val c = Zk.colors
-    Canvas(modifier.semantics { contentDescription = if (history == null) "Balance chart unavailable" else "Recent balance chart" }) {
-        val values = history?.balances ?: return@Canvas
+/** La franja de la curva, en fracciones del alto del inicio. */
+private const val CURVE_TOP = 0.46f
+private const val CURVE_BOTTOM = 0.76f
+
+/** Línea de los movimientos y lo que queda encima: el degradé y la lluvia de dígitos. */
+private class CurveGeometry(val line: Path, val above: Path, val lowest: Float)
+
+private fun curveGeometry(values: List<Long>?, size: Size): CurveGeometry {
+    val top = size.height * CURVE_TOP
+    val bottom = size.height * CURVE_BOTTOM
+    val points = if (values == null || values.size < 2 || values.max() == values.min()) {
+        // Sin movimientos (o todos iguales): plana, en la parte baja de la franja.
+        val y = bottom - (bottom - top) * 0.3f
+        listOf(Offset(-2f, y), Offset(size.width + 2f, y))
+    } else {
         val low = values.min().toDouble()
-        val spread = (values.max().toDouble() - low).coerceAtLeast(1.0)
-        val points = values.mapIndexed { i, value ->
-            Offset(i.toFloat() / (values.size - 1) * size.width,
-                size.height * (0.87f - ((value - low) / spread).toFloat() * 0.72f))
+        val spread = values.max().toDouble() - low
+        values.mapIndexed { i, value ->
+            Offset(-2f + i.toFloat() / (values.size - 1) * (size.width + 4f),
+                bottom - ((value - low) / spread).toFloat() * (bottom - top))
         }
-        val line = Path().apply {
-            moveTo(points.first().x, points.first().y)
-            points.zipWithNext().forEach { (a, b) ->
-                val mid = (a.x + b.x) / 2
-                cubicTo(mid, a.y, mid, b.y, b.x, b.y)
-            }
-        }
-        val area = Path().apply { addPath(line); lineTo(size.width, size.height); lineTo(0f, size.height); close() }
-        drawPath(area, Brush.verticalGradient(listOf(c.text.copy(alpha = 0.14f), c.text.copy(alpha = 0f))))
-        for (width in listOf(12f, 10f, 8f, 6f, 4f)) drawPath(line, c.text.copy(alpha = 0.012f), style = Stroke(width.dp.toPx(), cap = StrokeCap.Round))
-        drawPath(line, c.text, style = Stroke(1.5.dp.toPx(), cap = StrokeCap.Round))
     }
+    val line = Path().apply {
+        moveTo(points.first().x, points.first().y)
+        points.zipWithNext().forEach { (a, b) ->
+            val mid = (a.x + b.x) / 2
+            cubicTo(mid, a.y, mid, b.y, b.x, b.y)
+        }
+    }
+    val above = Path().apply { addPath(line); lineTo(size.width + 2f, -2f); lineTo(-2f, -2f); close() }
+    return CurveGeometry(line, above, points.maxOf { it.y })
 }
 
-/** El anillo es un marco de red, no un gráfico de proporciones entre unidades incompatibles. */
+/** Un número entero chico y estable para la posición de cada dígito. */
+private fun mix(a: Int, b: Int, c: Int = 0): Int {
+    var h = a * 0x27d4eb2d xor (b * 0x165667b1) xor (c * 0x1f3d5b79)
+    h = h xor (h ushr 15); h *= 0x2c1b3c6d; h = h xor (h ushr 12)
+    return h and 0x7fffffff
+}
+
+/**
+ * El fondo del inicio. Lo quieto (degradé, resplandor de la línea y el campo
+ * tenue de dígitos 0-9) se arma una vez por tamaño y curva; lo único que se
+ * redibuja son las gotas que caen, a unos 16 cuadros por segundo. Sin
+ * animaciones (ajuste de la app o del sistema) queda quieto.
+ */
 @Composable
-private fun NetworkRing(state: QuanticState, accountId: String, onNetwork: () -> Unit) {
+private fun BalanceBackdrop(values: List<Long>?, modifier: Modifier) {
     val c = Zk.colors
-    BoxWithConstraints(Modifier.fillMaxWidth().widthIn(max = 540.dp).aspectRatio(1.2f)) {
-        val diameter = maxWidth
-        Canvas(Modifier.fillMaxSize()) {
-            val center = Offset(size.width * 0.5f, size.height * 0.50f)
-            val radius = size.width * 0.315f
-            val stroke = size.width * 0.060f
-            val box = Size(radius * 2, radius * 2)
-            val top = center - Offset(radius, radius)
-            for ((start, sweep) in listOf(225f to 90f, 330f to 58f, 42f to 30f, 112f to 99f)) {
-                drawArc(if (start == 42f) c.text.copy(alpha = 0.18f) else c.text,
-                    start, sweep, false, top, box, style = Stroke(stroke, cap = StrokeCap.Round))
-            }
-            drawCircle(c.text.copy(alpha = 0.05f), radius * 0.69f, center)
-            drawCircle(c.text.copy(alpha = 0.28f), radius * 0.67f, center, style = Stroke(1.dp.toPx()))
-            listOf(-1f to -1f, 1f to -1f, -1f to 1f, 1f to 1f).forEach { (x, y) ->
-                val dot = center + Offset(x * size.width * 0.263f, y * size.width * 0.253f)
-                val end = dot + Offset(x * size.width * 0.036f, y * size.width * 0.026f)
-                drawLine(c.textSoft, dot, end, 1.dp.toPx())
-                drawCircle(c.textSoft, 2.dp.toPx(), dot)
+    val ink = c.text
+    val animate = Zk.animations
+    var clock by remember { mutableLongStateOf(0L) }
+    if (animate) {
+        LaunchedEffect(Unit) {
+            val start = withInfiniteAnimationFrameMillis { it }
+            while (true) {
+                withInfiniteAnimationFrameMillis { clock = it - start }
+                delay(55)
             }
         }
-        Box(Modifier.align(Alignment.Center).size(diameter * 0.40f).clip(CircleShape)
-            .clickable(role = Role.Button, onClick = onNetwork)
-            .semantics { contentDescription = "Network details" }, contentAlignment = Alignment.Center) {
-            ZKAPrivAvatar(accountId, Modifier.size(80.dp).testTag("home-avatar"))
-        }
-        Metric("Height", (if (state.tip > 0) state.tip else state.height).takeIf { it > 0 }
-            ?.let { String.format(Locale.US, "%,d", it) } ?: "—",
-            Modifier.align(Alignment.TopStart).padding(start = 25.dp), false)
-        Metric("Hashrate", if (state.torEnabled) "—" else displayHashrate(state.hashrateHps),
-            Modifier.align(Alignment.TopEnd).padding(end = 25.dp), true)
-        Metric("Sync", when { state.tip <= 0 -> "—"; state.inSync -> "100%"; else -> "${(state.progress * 100).toInt().coerceAtMost(99)}%" },
-            Modifier.align(Alignment.BottomStart).padding(start = 25.dp), false)
-        Metric("Difficulty", if (state.torEnabled) "—" else state.difficultyBits?.let { "$it bits" } ?: "—",
-            Modifier.align(Alignment.BottomEnd).padding(end = 25.dp), true)
     }
-    Text(when { state.error != null -> "Out of date · retrying"; state.lastSyncMillis == 0L -> "Connecting…";
-        !state.inSync -> "Syncing…"; else -> "Quantic Testnet · Connected" },
-        Modifier.fillMaxWidth().padding(top = 16.dp).clickable(onClick = onNetwork),
-        color = if (state.error != null) c.warning else c.textMuted, textAlign = TextAlign.Center, fontSize = 10.sp, lineHeight = 13.sp)
-}
-
-@Composable
-private fun Metric(label: String, value: String, modifier: Modifier, right: Boolean) {
-    Column(modifier, horizontalAlignment = if (right) Alignment.End else Alignment.Start) {
-        Text(label, color = Zk.colors.textSoft, fontSize = 13.sp, lineHeight = 17.sp)
-        Text(value, color = Zk.colors.text, fontSize = 17.sp, lineHeight = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-    }
-}
-
-/** Trama estática, decorativa y tenue; no contiene información de la cuenta. */
-@Composable
-private fun MatrixBackdrop(modifier: Modifier) {
-    val color = Zk.colors.text
-    val paint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE } }
-    Canvas(modifier) {
-        paint.textSize = 7.dp.toPx()
-        val stepX = 15.dp.toPx()
-        val stepY = 12.dp.toPx()
-        drawIntoCanvas { canvas ->
-            for (row in 0..(size.height / stepY).toInt()) {
-                for (col in 0..(size.width / stepX).toInt()) {
-                    paint.color = color.copy(alpha = 0.045f * (1f - row * stepY / size.height).coerceIn(0f, 1f)).toArgb()
-                    canvas.nativeCanvas.drawText(if ((col * 7 + row * 13) % 5 < 2) "1" else "0",
-                        col * stepX + 5.dp.toPx(), row * stepY, paint)
+    val paint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE; textAlign = Paint.Align.CENTER } }
+    val density = LocalDensity.current
+    val stepX = with(density) { 14.dp.toPx() }
+    val stepY = with(density) { 15.dp.toPx() }
+    val glyph = with(density) { 7.5.dp.toPx() }
+    Box(modifier.semantics { contentDescription = if (values == null) "Balance chart" else "Recent balance chart" }
+        .drawWithCache {
+            val geo = curveGeometry(values, size)
+            val columns = ceil(size.width / stepX).toInt() + 1
+            val rows = ceil(geo.lowest / stepY).toInt() + 1
+            // Más visible cerca de la línea, sin desaparecer arriba.
+            fun fade(y: Float) = 0.35f + 0.65f * (y / geo.lowest).coerceIn(0f, 1f)
+            fun digit(col: Int, row: Int, salt: Int = 0) = ('0' + mix(col, row, salt) % 10).toString()
+            // Hasta el punto más bajo de la línea: lo de abajo nunca se ve.
+            val field = ImageBitmap(size.width.toInt().coerceAtLeast(1), ceil(geo.lowest).toInt().coerceAtLeast(1))
+            androidx.compose.ui.graphics.Canvas(field).nativeCanvas.apply {
+                paint.textSize = glyph
+                for (row in 0 until rows) for (col in 0 until columns) {
+                    val y = row * stepY + glyph
+                    paint.color = android.graphics.Color.argb((255 * 0.075f * fade(y)).toInt(), 255, 255, 255)
+                    drawText(digit(col, row), col * stepX + stepX / 2, y, paint)
                 }
             }
+            val wash = Brush.verticalGradient(listOf(ink.copy(alpha = 0f), ink.copy(alpha = 0.035f), ink.copy(alpha = 0.13f)),
+                startY = size.height * (CURVE_TOP - 0.42f), endY = geo.lowest)
+            val tint = ColorFilter.tint(ink, BlendMode.SrcIn)
+            onDrawBehind {
+                clipPath(geo.above) {
+                    drawRect(wash)
+                    for ((width, alpha) in listOf(46.dp to 0.012f, 36.dp to 0.012f, 27.dp to 0.014f, 19.dp to 0.016f, 12.dp to 0.02f, 6.dp to 0.03f)) {
+                        drawPath(geo.line, ink.copy(alpha = alpha), style = Stroke(width.toPx(), cap = StrokeCap.Round))
+                    }
+                    drawImage(field, colorFilter = tint)
+                    // Las gotas: una cabeza que baja por cada columna y una estela que se apaga.
+                    val t = clock
+                    if (t > 0) drawIntoCanvas { canvas ->
+                        paint.textSize = glyph
+                        val trail = 9
+                        for (col in 0 until columns) {
+                            val speed = stepY * (2.2f + (mix(col, 7) % 100) / 30f) // filas por segundo
+                            val period = (rows + trail) * stepY * (1.15f + (mix(col, 11) % 100) / 110f)
+                            val head = ((t / 1000f * speed + mix(col, 3) % 1000 / 1000f * period) % period)
+                            val headRow = floor(head / stepY).toInt()
+                            for (k in 0 until trail) {
+                                val row = headRow - k
+                                if (row < 0 || row >= rows) continue
+                                val y = row * stepY + glyph
+                                val strength = if (k == 0) 0.34f else 0.2f * (1f - k / trail.toFloat())
+                                paint.color = ink.copy(alpha = strength * fade(y)).toArgb()
+                                val text = if (k < 2) digit(col, row, (t / 140).toInt()) else digit(col, row)
+                                canvas.nativeCanvas.drawText(text, col * stepX + stepX / 2, y, paint)
+                            }
+                        }
+                    }
+                }
+                for ((width, alpha) in listOf(7.dp to 0.06f, 3.5.dp to 0.14f)) {
+                    drawPath(geo.line, ink.copy(alpha = alpha), style = Stroke(width.toPx(), cap = StrokeCap.Round))
+                }
+                drawPath(geo.line, ink, style = Stroke(1.6.dp.toPx(), cap = StrokeCap.Round))
+            }
+        })
+}
+
+// ── La red, en su hoja ───────────────────────────────────────────────────────
+
+/** El anillo de la red con sus cuatro datos y, abajo, el estado. Va en una hoja. */
+@Composable
+internal fun NetworkPanel(state: QuanticState, accountId: String, onDetails: () -> Unit) {
+    val c = Zk.colors
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        NetworkRing(state, accountId)
+        Text(when { state.error != null -> "Out of date · retrying"; state.lastSyncMillis == 0L -> "Connecting…";
+            !state.inSync -> "Syncing…"; else -> "Quantic Testnet · Connected" },
+            Modifier.padding(top = 8.dp), color = if (state.error != null) c.warning else c.textMuted,
+            textAlign = TextAlign.Center, fontSize = 11.sp, lineHeight = 14.sp)
+        Text("Network details", Modifier.padding(top = 6.dp).clip(CircleShape).clickable(role = Role.Button, onClick = onDetails)
+            .padding(horizontal = 14.dp, vertical = 10.dp), color = c.accentSoft, fontSize = 13.sp, lineHeight = 16.sp)
+    }
+}
+
+/**
+ * El anillo es un marco, no un gráfico de proporciones. Cada dato queda en su
+ * esquina, afuera del anillo, y la guía sale de su borde hacia el anillo sin
+ * cruzar las letras.
+ */
+@Composable
+private fun NetworkRing(state: QuanticState, accountId: String) {
+    val c = Zk.colors
+    BoxWithConstraints(Modifier.fillMaxWidth().widthIn(max = 440.dp)) {
+        val w = maxWidth
+        val h = w * 0.92f
+        val outer = w * 0.30f
+        val stroke = w * 0.055f
+        val reach = (outer + w * 0.035f) * 0.7071f // del centro al punto, en cada eje
+        val tail = w * 0.035f
+        val corner = reach + tail // del centro al extremo de la guía, en cada eje
+        Box(Modifier.fillMaxWidth().height(h)) {
+            Canvas(Modifier.fillMaxSize()) {
+                val center = Offset(size.width / 2, size.height / 2)
+                val r = (outer - stroke / 2).toPx()
+                val box = Size(r * 2, r * 2)
+                val topLeft = center - Offset(r, r)
+                for ((start, sweep) in listOf(225f to 90f, 330f to 58f, 42f to 30f, 112f to 99f)) {
+                    drawArc(if (start == 42f) c.text.copy(alpha = 0.18f) else c.text,
+                        start, sweep, false, topLeft, box, style = Stroke(stroke.toPx(), cap = StrokeCap.Round))
+                }
+                val inner = (outer - stroke).toPx() - w.toPx() * 0.05f
+                drawCircle(c.text.copy(alpha = 0.05f), inner, center)
+                drawCircle(c.text.copy(alpha = 0.28f), inner, center, style = Stroke(1.dp.toPx()))
+                listOf(-1f to -1f, 1f to -1f, -1f to 1f, 1f to 1f).forEach { (x, y) ->
+                    val dot = center + Offset(x * reach.toPx(), y * reach.toPx())
+                    val end = dot + Offset(x * tail.toPx(), y * tail.toPx())
+                    drawLine(c.textSoft, dot, end, 1.dp.toPx())
+                    drawCircle(c.textSoft, 2.dp.toPx(), dot)
+                }
+            }
+            Box(Modifier.align(Alignment.Center).size(w * 0.30f), contentAlignment = Alignment.Center) {
+                ZKAPrivAvatar(accountId, Modifier.size(w * 0.19f).testTag("home-avatar"))
+            }
+            val gap = 4.dp
+            val labelTop = h / 2 - corner - gap
+            val labelBottom = h / 2 + corner + gap
+            Metric("Height", (if (state.tip > 0) state.tip else state.height).takeIf { it > 0 }
+                ?.let { String.format(Locale.US, "%,d", it) } ?: "—", false, top = null, bottom = labelTop)
+            Metric("Hashrate", if (state.torEnabled) "—" else displayHashrate(state.hashrateHps), true,
+                top = null, bottom = labelTop)
+            Metric("Sync", when { state.tip <= 0 -> "—"; state.inSync -> "100%"
+                else -> "${(state.progress * 100).toInt().coerceAtMost(99)}%" }, false, top = labelBottom, bottom = null)
+            Metric("Difficulty", if (state.torEnabled) "—" else state.difficultyBits?.let { "$it bits" } ?: "—", true,
+                top = labelBottom, bottom = null)
+        }
+    }
+}
+
+/** Un dato del anillo: arriba se apoya sobre la guía (`bottom`), abajo cuelga de ella (`top`). */
+@Composable
+private fun BoxScope.Metric(label: String, value: String, right: Boolean, top: Dp?, bottom: Dp?) {
+    val placement = if (top != null) Modifier.align(if (right) Alignment.TopEnd else Alignment.TopStart).padding(top = top)
+    else Modifier.align(Alignment.TopStart).fillMaxWidth().height(bottom!!)
+    Box(placement.padding(horizontal = 22.dp)) {
+        Column(Modifier.align(if (right) Alignment.BottomEnd else Alignment.BottomStart),
+            horizontalAlignment = if (right) Alignment.End else Alignment.Start) {
+            Text(label, color = Zk.colors.textSoft, fontSize = 12.sp, lineHeight = 15.sp)
+            Text(value, color = Zk.colors.text, fontSize = 16.sp, lineHeight = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1)
         }
     }
 }

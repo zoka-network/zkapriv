@@ -1,5 +1,32 @@
 package com.zoka.zkapriv.ui.quantic
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import com.zoka.zkapriv.ui.R
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.BorderStroke
@@ -61,10 +88,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.zoka.zkapriv.security.vault.QuanticVault
-import com.zoka.zkapriv.ui.components.AccentDot
 import com.zoka.zkapriv.ui.components.ErrorText
-import com.zoka.zkapriv.ui.components.Eyebrow
-import com.zoka.zkapriv.ui.components.GlassArc
 import com.zoka.zkapriv.ui.components.HintText
 import com.zoka.zkapriv.ui.components.Notice
 import com.zoka.zkapriv.ui.components.Panel
@@ -83,51 +107,127 @@ import com.zoka.zkapriv.ui.theme.Zk
 // ── Bienvenida ───────────────────────────────────────────────────────────────
 
 /**
- * La primera pantalla, como el inicio de zoka.network: el arco de luz, la
- * marca grande con el rosa solo en QUANTIC, una frase y las dos entradas.
+ * La primera pantalla (diseño del 20/11/2026): una tarjeta con el logo,
+ * ZOKA QUANTIC · WALLET y el mundo en puntos, y abajo las dos entradas con
+ * su ícono. El mapa es un PNG de puntos nítidos sacado de la referencia.
  */
 @Composable
 fun WelcomeScreen(onCreate: () -> Unit, onRestore: () -> Unit) {
     val c = Zk.colors
-    ZkScreen(
-        title = null,
-        scroll = false,
-        backdrop = { GlassArc(towardsEnd = true) },
-        bottom = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                ZButton(onCreate, Modifier.fillMaxWidth(), ZButtonVariant.Primary, ZButtonSize.Large) {
-                    ZButtonText("Create wallet")
-                    ForwardMark()
-                }
-                ZButton(onRestore, Modifier.fillMaxWidth(), ZButtonVariant.Secondary, ZButtonSize.Large) {
-                    ZButtonText("Restore with 24 words")
-                }
-            }
-        },
+    Column(
+        Modifier.fillMaxSize().background(c.background).statusBarsPadding().navigationBarsPadding()
+            .padding(horizontal = 16.dp),
     ) {
-        Spacer(Modifier.weight(1f))
-        Column(Modifier.padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            Eyebrow("Quantic Testnet v3", dot = true)
-            Text(
-                buildAnnotatedString {
-                    withStyle(SpanStyle(color = c.text)) { append("ZOKA\n") }
-                    withStyle(SpanStyle(color = c.accent)) { append("QUANTIC") }
-                },
-                style = Zk.text.brandHero.copy(fontSize = 50.sp, lineHeight = 52.sp),
-            )
-            Text("Private by design.", style = Zk.text.brandTagline, color = c.textSoft)
-            Text(
-                "A post-quantum private wallet. Your keys and every proof stay on this phone.",
-                style = Zk.text.lead,
-                color = c.textSoft,
-                modifier = Modifier.widthIn(max = 300.dp),
-            )
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                AccentDot(size = 5.dp, color = c.textMuted)
-                Text("TEST COINS, NO VALUE", style = Zk.text.pill, color = c.textMuted)
+        WelcomeCard(Modifier.weight(1f).fillMaxWidth().padding(top = 16.dp))
+        Spacer(Modifier.height(18.dp))
+        WelcomeEntry("New wallet", "Create a new wallet", onCreate, Modifier.testTag("welcome-new")) { color ->
+            DashboardNavIcon("home", color, Modifier.size(30.dp))
+        }
+        Spacer(Modifier.height(12.dp))
+        WelcomeEntry("Import wallet", "Restore an existing wallet", onRestore, Modifier.testTag("welcome-import")) { color ->
+            ImportGlyph(color, Modifier.size(30.dp))
+        }
+        Spacer(Modifier.height(20.dp))
+    }
+}
+
+@Composable
+private fun WelcomeCard(modifier: Modifier) {
+    val c = Zk.colors
+    val shape = RoundedCornerShape(30.dp)
+    val panel = if (c.dark) listOf(Color(0xFF151518), Color(0xFF0E0E11)) else listOf(Color(0xFF17171A), Color(0xFF0F0F12))
+    BoxWithConstraints(
+        modifier.clip(shape).background(Brush.verticalGradient(panel))
+            .border(1.dp, Color.White.copy(alpha = 0.05f), shape),
+    ) {
+        val w = maxWidth
+        // El paño claro de la esquina de arriba a la izquierda.
+        Canvas(Modifier.fillMaxSize()) {
+            val a = size.width * 0.38f
+            val b = size.width * 0.33f
+            drawPath(Path().apply {
+                moveTo(0f, 0f); lineTo(a, 0f)
+                cubicTo(a * 0.86f, b * 0.30f, a * 0.62f, b * 0.62f, a * 0.36f, b * 0.86f)
+                quadraticBezierTo(a * 0.20f, b * 1.0f, 0f, b)
+                close()
+            }, Color.White.copy(alpha = 0.06f))
+        }
+        // El mundo en puntos y, encima, los dos cuadrados de adorno (en fracciones del mapa).
+        val mapWidth = w * 0.62f
+        Box(Modifier.align(Alignment.BottomEnd).width(mapWidth).aspectRatio(990f / 846f)) {
+            Image(painterResource(R.drawable.welcome_world_dots), null, Modifier.fillMaxSize().alpha(0.85f),
+                contentScale = ContentScale.FillBounds)
+            val mapHeight = mapWidth * 846f / 990f
+            val tile = Color.White.copy(alpha = 0.07f)
+            listOf(0.834f to 0.437f, 0.636f to 0.690f).forEach { (x, y) ->
+                Box(Modifier.offset(x = mapWidth * x, y = mapHeight * y).size(mapWidth * 0.198f, mapWidth * 0.205f)
+                    .background(tile, RoundedCornerShape(14.dp)))
             }
         }
-        Spacer(Modifier.weight(0.35f))
+        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Spacer(Modifier.weight(0.92f))
+            Image(painterResource(R.drawable.zkapriv_logo_mark), "ZKAPriv", Modifier.width(w * 0.23f).aspectRatio(600f / 740f))
+            Spacer(Modifier.height(22.dp))
+            Text(
+                buildAnnotatedString {
+                    withStyle(SpanStyle(color = Color.White)) { append("ZOKA ") }
+                    withStyle(SpanStyle(color = ZkLogoPink)) { append("QUANTIC") }
+                },
+                style = Zk.text.brandHero.copy(fontSize = 20.sp, lineHeight = 26.sp, letterSpacing = 3.2.sp, fontWeight = FontWeight.SemiBold),
+                maxLines = 1,
+                softWrap = false,
+            )
+            Text(
+                "WALLET",
+                Modifier.padding(top = 10.dp, start = 9.dp),
+                style = Zk.text.brandTagline.copy(fontSize = 14.sp, lineHeight = 18.sp, letterSpacing = 9.sp, fontWeight = FontWeight.Medium),
+                color = Color(0xFFA3A3AA),
+                maxLines = 1,
+            )
+            Spacer(Modifier.weight(1.28f))
+        }
+    }
+}
+
+/** El rosa del logo, solo para la marca de la bienvenida. */
+private val ZkLogoPink = Color(0xFFFD60A8)
+
+/** Una entrada de la bienvenida: ícono, divisor y dos líneas, en una cápsula. */
+@Composable
+private fun WelcomeEntry(title: String, sub: String, onClick: () -> Unit, modifier: Modifier,
+    icon: @Composable (Color) -> Unit) {
+    val shape = CircleShape
+    Row(
+        modifier.fillMaxWidth().heightIn(min = 62.dp).clip(shape)
+            .background(Brush.verticalGradient(listOf(Color(0xFF1D1D20), Color(0xFF18181A))))
+            .border(1.dp, Color.White.copy(alpha = 0.05f), shape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.width(96.dp), contentAlignment = Alignment.Center) { icon(Color.White) }
+        Box(Modifier.width(1.dp).height(34.dp).background(Color.White.copy(alpha = 0.16f)))
+        Column(Modifier.weight(1f).padding(start = 20.dp, end = 16.dp)) {
+            Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp,
+                lineHeight = 22.sp, fontWeight = FontWeight.SemiBold), maxLines = 1)
+            Text(sub, color = Color(0xFF9D9DA4), style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp,
+                lineHeight = 18.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** Bandeja con la flecha hacia abajo: importar. */
+@Composable
+private fun ImportGlyph(color: Color, modifier: Modifier) {
+    Canvas(modifier) {
+        val u = size.width / 32f
+        val stroke = Stroke(2.2f * u, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        drawLine(color, Offset(16f * u, 4f * u), Offset(16f * u, 20f * u), 2.2f * u, StrokeCap.Round)
+        drawPath(Path().apply { moveTo(10f * u, 14.5f * u); lineTo(16f * u, 20.5f * u); lineTo(22f * u, 14.5f * u) }, color, style = stroke)
+        drawPath(Path().apply {
+            moveTo(4f * u, 19f * u); lineTo(4f * u, 25f * u); quadraticBezierTo(4f * u, 28f * u, 7f * u, 28f * u)
+            lineTo(25f * u, 28f * u); quadraticBezierTo(28f * u, 28f * u, 28f * u, 25f * u); lineTo(28f * u, 19f * u)
+        }, color, style = stroke)
     }
 }
 

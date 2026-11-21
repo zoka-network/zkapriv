@@ -56,37 +56,53 @@ class AvatarInstrumentedTest {
         compose.onNodeWithTag("avatar-empty").assertContentDescriptionEquals("Account avatar unavailable")
     }
 
-    @Test fun dashboardFitsThePhoneWithoutClippingNetworkValues() = preview("home") {
+    @Test fun homeIsCleanAndTheBarOpensTheNetworkRing() = preview("home") {
+        compose.onNodeWithText("1,284,567").assertDoesNotExist()
+        listOf("Wallet", "Receive", "Send", "Network", "Activity", "Settings").forEach {
+            compose.onNodeWithContentDescription(it).assertIsDisplayed()
+        }
+        compose.onNodeWithContentDescription("Network").performClick()
         listOf("1,284,567", "3.48 GH/s", "100%", "29 bits").forEach {
             compose.onNodeWithText(it).assertIsDisplayed()
         }
-        listOf("Wallet", "Receive", "Send", "Activity", "Settings").forEach {
-            compose.onNodeWithContentDescription(it).assertIsDisplayed()
-        }
+        compose.onNodeWithTag("home-avatar", useUnmergedTree = true).assertIsDisplayed()
     }
 
-    @Test fun hidingBalanceAlsoHidesTheChartAndChange() = preview("home") {
+    @Test fun sheetMaximizesAndMinimizes() = preview("sheet-receive") {
+        val half = compose.onNodeWithTag("window-sheet").getBoundsInRoot()
+        compose.onNodeWithContentDescription("Maximize").performClick()
+        compose.onNodeWithContentDescription("Restore").assertIsDisplayed().performClick()
+        compose.onNodeWithContentDescription("Maximize").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Minimize").performClick()
+        compose.onNodeWithTag("window-sheet").assertDoesNotExist()
+        assertTrue(half.bottom.value > 0f)
+    }
+
+    @Test fun hidingBalanceFlattensTheChartAndHidesTheChange() = preview("home") {
+        compose.onNodeWithContentDescription("Recent balance chart").assertExists()
         compose.onNodeWithContentDescription("Hide balance").performClick()
         compose.onNodeWithContentDescription("Recent balance chart").assertDoesNotExist()
-        compose.onNodeWithText("Balance hidden").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Balance chart").assertExists()
         compose.onNodeWithContentDescription("Show balance").performClick()
-        compose.onNodeWithContentDescription("Recent balance chart").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Recent balance chart").assertExists()
     }
 
-    @Test fun selectingAnotherAccountChangesItsAvatarAndGoingBackRestoresIt() = preview("home") {
+    @Test fun selectingAnotherAccountChangesItsAvatarAndGoingBackRestoresIt() = preview("sheet-network") {
         fun pattern() = compose.onNodeWithTag("home-avatar", useUnmergedTree = true)
             .captureToImage().toPixelMap().let { pixels ->
                 List(pixels.height) { y -> List(pixels.width) { x -> pixels[x, y].toArgb() } }
             }
         val main = pattern()
+        compose.onNodeWithContentDescription("Minimize").performClick()
         compose.onNodeWithContentDescription("Change wallet").performClick()
         compose.onNodeWithText("Savings").performClick()
         compose.onNodeWithText("Savings").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Network").performClick()
         assertNotEquals(main, pattern())
+        compose.onNodeWithContentDescription("Minimize").performClick()
         compose.onNodeWithContentDescription("Change wallet").performClick()
         compose.onNodeWithText("Main Wallet").performClick()
+        compose.onNodeWithContentDescription("Network").performClick()
         assertEquals(main, pattern())
-        compose.onNodeWithContentDescription("Settings").performClick()
-        compose.onNodeWithText("Settings").assertIsDisplayed()
     }
 }

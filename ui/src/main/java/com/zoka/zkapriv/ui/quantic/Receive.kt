@@ -9,6 +9,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -72,6 +73,12 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun ReceiveScreen(vm: WalletViewModel, onBack: (() -> Unit)? = null) {
+    ZkScreen(title = "Receive", onBack = onBack) { ReceivePanel(vm) }
+}
+
+/** Receive sin el marco de pantalla: la pantalla y la hoja de la barra lo comparten. */
+@Composable
+internal fun ColumnScope.ReceivePanel(vm: WalletViewModel) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val walletId by vm.activeWallet.collectAsState()
@@ -85,7 +92,7 @@ fun ReceiveScreen(vm: WalletViewModel, onBack: (() -> Unit)? = null) {
         var selected by rememberSaveable { mutableIntStateOf(0) }
         var adding by remember { mutableStateOf(false) }
         var error by remember { mutableStateOf<String?>(null) }
-        ReceiveContent(
+        ReceiveBody(
             addresses = addresses,
             selected = selected,
             adding = adding,
@@ -105,7 +112,6 @@ fun ReceiveScreen(vm: WalletViewModel, onBack: (() -> Unit)? = null) {
                 val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
                 context.startActivity(Intent.createChooser(send, "Share address"))
             },
-            onBack = onBack,
         )
     }
 }
@@ -122,6 +128,22 @@ internal fun ReceiveContent(
     onShare: (String) -> Unit,
     onBack: (() -> Unit)? = null,
 ) {
+    ZkScreen(title = "Receive", onBack = onBack) {
+        ReceiveBody(addresses, selected, adding, error, onSelect, onAdd, onShare)
+    }
+}
+
+/** Chips, QR, estado y botones; también va dentro de la hoja de la barra. */
+@Composable
+internal fun ColumnScope.ReceiveBody(
+    addresses: List<WalletAddress>,
+    selected: Int,
+    adding: Boolean,
+    error: String?,
+    onSelect: (Int) -> Unit,
+    onAdd: () -> Unit,
+    onShare: (String) -> Unit,
+) {
     val current = addresses.firstOrNull { it.index == selected } ?: addresses.first()
     var which by rememberSaveable { mutableStateOf("Short") }
     var askNew by remember { mutableStateOf(false) }
@@ -129,40 +151,39 @@ internal fun ReceiveContent(
     val shown = if (short) current.short else current.full
     val extras = addresses.count { it.index > 0 }
 
-    ZkScreen(title = "Receive", onBack = onBack) {
-        AddressChips(
-            addresses = addresses,
-            selected = current.index,
-            canAdd = extras < QuanticVault.MAX_EXTRA_ADDRESSES,
-            adding = adding,
-            onSelect = onSelect,
-            onNew = { askNew = true },
-        )
-        Panel(contentPadding = PaddingValues(20.dp), gap = 14.dp, hero = true) {
-            BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                // En un teléfono angosto el QR se achica en vez de salirse.
-                val side = if (maxWidth < QR_SIDE) maxWidth else QR_SIDE
-                // El QR que sale se dibuja con su propio valor, no con el nuevo.
-                ZkAnimatedSwap(short to shown) { (isShort, value) ->
-                    if (isShort) ZkQrCode(value, boxSize = side) else AnimatedMultiPartQr(value, side)
-                }
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                ZLabel(if (current.index == 0) "Main address" else "Address #${current.index}")
-                MonoText(middleTruncated(shown, head = 16, tail = 12))
-            }
-            AddressStatus(current.published, short)
-            Segmented(listOf("Short", "Full"), which, { which = it }, Modifier.fillMaxWidth())
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            CopyButton(shown, Modifier.weight(1f), variant = ZButtonVariant.Primary, size = ZButtonSize.Large)
-            ZButton({ onShare(shown) }, Modifier.weight(1f), ZButtonVariant.Secondary, ZButtonSize.Large) {
-                Icon(Icons.Outlined.Share, null, tint = LocalContentColor.current, modifier = Modifier.size(15.dp))
-                ZButtonText("Share")
+    AddressChips(
+        addresses = addresses,
+        selected = current.index,
+        canAdd = extras < QuanticVault.MAX_EXTRA_ADDRESSES,
+        adding = adding,
+        onSelect = onSelect,
+        onNew = { askNew = true },
+    )
+    Panel(contentPadding = PaddingValues(20.dp), gap = 14.dp, hero = true) {
+        BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            // En un teléfono angosto el QR se achica en vez de salirse.
+            val side = if (maxWidth < QR_SIDE) maxWidth else QR_SIDE
+            // El QR que sale se dibuja con su propio valor, no con el nuevo.
+            ZkAnimatedSwap(short to shown) { (isShort, value) ->
+                if (isShort) ZkQrCode(value, boxSize = side) else AnimatedMultiPartQr(value, side)
             }
         }
-        error?.let { Notice(it, tone = ZkTone.Err) }
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            ZLabel(if (current.index == 0) "Main address" else "Address #${current.index}")
+            MonoText(middleTruncated(shown, head = 16, tail = 12))
+        }
+        AddressStatus(current.published, short)
+        Segmented(listOf("Short", "Full"), which, { which = it }, Modifier.fillMaxWidth())
     }
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        CopyButton(shown, Modifier.weight(1f), variant = ZButtonVariant.Primary, size = ZButtonSize.Large)
+        ZButton({ onShare(shown) }, Modifier.weight(1f), ZButtonVariant.Secondary, ZButtonSize.Large) {
+            Icon(Icons.Outlined.Share, null, tint = LocalContentColor.current, modifier = Modifier.size(15.dp))
+            ZButtonText("Share")
+        }
+    }
+    error?.let { Notice(it, tone = ZkTone.Err) }
+
 
     if (askNew) {
         NewAddressSheet(

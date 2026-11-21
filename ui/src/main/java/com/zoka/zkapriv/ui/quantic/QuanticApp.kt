@@ -9,13 +9,16 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -48,7 +51,14 @@ fun QuanticApp(vm: WalletViewModel, locked: Boolean, onUnlocked: () -> Unit,
     // la ruta de cuando se dibujó, y con esa ruta vieja ("home") tocar Wallet
     // desde Send o Receive no hacía nada (3/11/2026). Tampoco se usa
     // restoreState: devolvía la pila guardada de otra pestaña.
+    // Receive y Network se abren en una hoja sobre la pantalla actual.
+    var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     fun selectTab(destination: String) {
+        if (destination == "receive" || destination == "network") {
+            sheet = destination
+            return
+        }
+        sheet = null
         if (nav.currentBackStackEntry?.destination?.route == destination) return
         if (destination == "home") {
             if (!nav.popBackStack("home", inclusive = false)) {
@@ -90,6 +100,7 @@ fun QuanticApp(vm: WalletViewModel, locked: Boolean, onUnlocked: () -> Unit,
         }
     }
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         CompositionLocalProvider(LocalWalletTabs provides tabs) {
             NavHost(
@@ -173,7 +184,6 @@ fun QuanticApp(vm: WalletViewModel, locked: Boolean, onUnlocked: () -> Unit,
                         vm,
                         onWallets = { nav.navigate("wallets") { launchSingleTop = true } },
                         onSettings = { selectTab("settings") },
-                        onNetwork = { nav.navigate("network") { launchSingleTop = true } },
                         onSendProgress = { selectTab("send") },
                     )
                 }
@@ -280,5 +290,20 @@ fun QuanticApp(vm: WalletViewModel, locked: Boolean, onUnlocked: () -> Unit,
             }
         }
         if (tabs) WalletNavigation(route, ::selectTab)
+    }
+    // Al bloquearse o salir de la billetera, la hoja se cierra.
+    if (!tabs && sheet != null) LaunchedEffect(Unit) { sheet = null }
+    when (sheet.takeIf { tabs }) {
+        "receive" -> WindowSheet("Receive", onDismiss = { sheet = null }, half = 0.74f) { ReceivePanel(vm) }
+        "network" -> WindowSheet("Network", onDismiss = { sheet = null }) {
+            val state by vm.state.collectAsState()
+            val wallets by vm.wallets.collectAsState()
+            val active by vm.activeWallet.collectAsState()
+            NetworkPanel(state, wallets.firstOrNull { it.id == active }?.publicAccountId.orEmpty()) {
+                sheet = null
+                nav.navigate("network") { launchSingleTop = true }
+            }
+        }
+    }
     }
 }

@@ -66,23 +66,35 @@ para las identidades existentes; no cambiar sus constantes silenciosamente.
 ## Integración visual
 
 `ZKAPrivAvatar(accountId: String, modifier: Modifier)` dibuja exclusivamente
-el patrón producido por `AvatarMosaic.generate`. Home lo usa a 32 dp en la
-cuenta y 80 dp en el anillo; Wallets a 40 dp en cada fila. El tema claro
-conserva su elección de colores para el panel, pero no modifica el avatar.
+el patrón producido por `AvatarMosaic.generate`. Wallets lo muestra a 40 dp en
+cada fila y la hoja Network lo pone en el centro del anillo (19 % del ancho).
+**El selector de cuenta del inicio no lleva mosaico** (pedido del 14/11): es
+una cápsula fina con el ícono de billetera, el nombre y la dirección corta.
+El tema claro conserva su elección de colores, pero no modifica el avatar.
 
-Home conserva el saldo real y permite ocultarlo al tocarlo; también oculta
-la curva y su variación. La curva se reconstruye a partir de hasta 40
-movimientos confirmados disponibles, incluyendo la comisión en los
-salientes. «Recent activity» **no es rentabilidad de mercado ni un período
-fijo**. Si los datos están incompletos o no concuerdan, no se inventa una
-curva. Los datos de demostración solo existen en la vista debug.
+### Inicio limpio y hojas (20/11/2026)
 
-El anillo es una composición visual, no un gráfico circular que compara
-altura, hashrate y dificultad como porcentajes. Muestra datos reales y
-«—» cuando faltan. La dificultad, en bits como la API de Zoka, se obtiene
-del mismo `/status` ya consultado; con Tor no se muestra ni se agrega una
-conexión. Los cuatro accesos son Wallet, Receive, Send y Activity; Settings
-está en el engranaje superior. El escáner sigue disponible desde Send.
+El inicio quedó en: selector fino, engranaje, saldo (tocarlo lo oculta) y la
+curva de movimientos con un degradé **de la línea hacia arriba** que lleva una
+lluvia de dígitos 0-9. Lo quieto (degradé, resplandor y campo tenue de
+dígitos) se arma una vez por tamaño y curva; solo las gotas se redibujan, a
+unos 16 cuadros por segundo, y se frenan sin animaciones (ajuste de la app o
+del sistema), en segundo plano y en las pruebas.
+
+La curva ya no desaparece por un dato raro: lo sin confirmar o de tipo
+desconocido se salta, un historial cortado deja el saldo de antes en 0 y, sin
+movimientos, la línea va plana. Con el saldo oculto también va plana. La
+variación (↗ % y ZKA) solo aparece con movimientos. Sigue sin ser
+rentabilidad de mercado.
+
+La barra tiene cinco accesos: Wallet, Receive, Send, **Network** (el anillo) y
+Activity. Receive y Network no cambian de pantalla: abren `WindowSheet`, una
+ventana que sube desde abajo con **maximizar a la izquierda y minimizar a la
+derecha**; también se arrastra (arriba maximiza, abajo achica o cierra), y
+atrás o tocar afuera la cierran. El anillo muestra altura, hashrate,
+sincronización y dificultad con datos reales («—» si faltan); cada dato se
+apoya en su guía sin cruzar las letras. «Network details» lleva a la pantalla
+de red de siempre.
 
 ## Pruebas y visualización
 
@@ -102,10 +114,11 @@ $env:JAVA_HOME = 'C:/Program Files/Java/jdk-17'
 .\gradlew.bat --no-daemon --max-workers=2 :ui:testDebugUnitTest :network:testDebugUnitTest :security:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
 adb shell am instrument -w -e class com.zoka.zkapriv.AvatarInstrumentedTest,com.zoka.zkapriv.WalletRedesignInstrumentedTest com.zoka.zkapriv.benchmark.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am start -S -W -n com.zoka.zkapriv.benchmark/com.zoka.zkapriv.MainActivity --es screen wallet-preview --es scenario home --es theme dark
+# Hojas: --es scenario sheet-network | sheet-receive | sheet-receive-full
 ```
 
-En la app normal: desbloqueá, abrí Wallet y tocá el nombre para ir al
-selector. En debug también existen `avatar-sizes`, `home-loading`,
+En la app normal: desbloqueá, tocá el nombre de la cuenta para ir al
+selector y el ícono del anillo de la barra para ver el mosaico. En debug también existen `avatar-sizes`, `home-loading`,
 `home-tor`, `home-large`, `wallets` y los escenarios anteriores.
 La compilación de prueba conserva el paquete separado
 `com.zoka.zkapriv.benchmark` (ZKAPriv Testnet). No se publica una release.

@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Android 12+: the system splash, black with the Z-Q mark. -->
+    <!-- Android 12+: the system splash, black with the ZKAPriv logo. -->
     <style name="Theme.ZkaPriv" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="colorPrimary">#F2ABD0</item>
         <item name="colorPrimaryVariant">#A8326A</item>
         <item name="colorOnPrimary">#0A0709</item>
         <item name="android:windowSplashScreenBackground">@color/splash_background</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_logo_foreground</item>
         <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_background</item>
         <item name="android:windowSplashScreenBrandingImage">@null</item>
     </style>

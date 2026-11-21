@@ -38,7 +38,7 @@ class WalletRedesignInstrumentedTest {
         compose.onNodeWithText("REMOVE FROM THIS PHONE").assertIsNotEnabled()
         compose.onNodeWithText("I have the 24 words of every wallet").performClick()
         compose.onNodeWithText("REMOVE FROM THIS PHONE").assertIsEnabled().performClick()
-        compose.onNodeWithText("CREATE WALLET").assertIsDisplayed()
+        compose.onNodeWithText("New wallet").assertIsDisplayed()
     }
 
     @Test fun resetStaysDisabledDuringPayment() = preview("reset-sending") {

@@ -27,7 +27,13 @@ import com.zoka.zkapriv.ui.theme.ZkTheme
 /** Solo accesible desde la actividad debug. Datos ficticios, sin abrir el almacén. */
 @Composable
 fun WalletDesignPreview(dark: Boolean, scenario: String) {
-    var selected by remember { mutableStateOf(if (scenario == "working") "proof" else scenario) }
+    // `sheet-receive`, `sheet-receive-full` y `sheet-network` abren la hoja sobre el inicio.
+    var selected by remember { mutableStateOf(when {
+        scenario == "working" -> "proof"
+        scenario.startsWith("sheet-") -> "home"
+        else -> scenario
+    }) }
+    var sheet by remember { mutableStateOf(scenario.removePrefix("sheet-").removeSuffix("-full").takeIf { scenario.startsWith("sheet-") }) }
     var tor by remember { mutableStateOf(false) }
     var theme by remember { mutableStateOf(if (dark) ThemeMode.DARK else ThemeMode.LIGHT) }
     var animations by remember { mutableStateOf(true) }
@@ -57,6 +63,7 @@ fun WalletDesignPreview(dark: Boolean, scenario: String) {
     val pinCheck: (String) -> QuanticVault.PinCheck = { QuanticVault.PinCheck.Wrong(4) }
     val tabs = selected in walletRoutes || selected == "receive-eight" || selected.startsWith("home-")
     ZkTheme(darkTheme = theme != ThemeMode.LIGHT, animations = animations) {
+        Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             CompositionLocalProvider(LocalWalletTabs provides tabs) {
                 Box(Modifier.weight(1f)) {
@@ -68,7 +75,7 @@ fun WalletDesignPreview(dark: Boolean, scenario: String) {
                                 "home-large" -> home.copy(spendableAtoms = 5_000_000_009_200)
                                 else -> home
                             }, false, activeEntry.name, onWallets = { selected = "wallets" },
-                            onSettings = { selected = "settings" }, onNetwork = { selected = "network" }, onSendProgress = {},
+                            onSettings = { selected = "settings" }, onSendProgress = {},
                             accountId = if (selected == "home-loading") "" else activeEntry.publicAccountId,
                         )
                         "avatar-sizes" -> ZkScreen(title = "Account mosaics") {
@@ -130,7 +137,18 @@ fun WalletDesignPreview(dark: Boolean, scenario: String) {
                     }
                 }
             }
-            if (tabs) WalletNavigation(if (selected == "receive-eight") "receive" else selected) { selected = it }
+            if (tabs) WalletNavigation(if (selected == "receive-eight") "receive" else selected) {
+                if (it == "receive" || it == "network") sheet = it else { sheet = null; selected = it }
+            }
+        }
+        when (sheet) {
+            "receive" -> WindowSheet("Receive", { sheet = null }, half = 0.74f, startFull = scenario.endsWith("-full")) {
+                ReceiveBody(addresses, addressIndex, false, null, { addressIndex = it }, onAdd = {}, onShare = {})
+            }
+            "network" -> WindowSheet("Network", { sheet = null }, startFull = scenario.endsWith("-full")) {
+                NetworkPanel(home, activeEntry.publicAccountId) { sheet = null; selected = "network" }
+            }
+        }
         }
     }
 }
