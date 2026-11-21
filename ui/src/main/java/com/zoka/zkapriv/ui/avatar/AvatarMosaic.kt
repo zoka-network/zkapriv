@@ -18,14 +18,31 @@ object AvatarMosaic {
     val palette: List<Long> = listOf(0xFF080809, 0xFF303036, 0xFFAAAAAF, 0xFFFAFAFA, 0xFFF2ABD0)
     const val BACKGROUND: Long = 0xFF101012
 
-    /** Null means unavailable/invalid: the view draws a neutral placeholder, not an identity. */
-    fun generate(accountId: String): List<Int>? {
-        if (accountId.length !in 1..256 || accountId.any {
-                it !in 'a'..'z' && it !in 'A'..'Z' && it !in '0'..'9' && it !in ":._-"
-            }) return null
+    private fun valid(accountId: String) = accountId.length in 1..256 && accountId.all {
+        it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it in ":._-"
+    }
+
+    private fun seed(accountId: String): ByteArray {
         val hash = MessageDigest.getInstance("SHA-256")
         hash.update(SEED_DOMAIN.toByteArray(Charsets.UTF_8))
-        val seed = hash.digest(accountId.toByteArray(Charsets.UTF_8))
+        return hash.digest(accountId.toByteArray(Charsets.UTF_8))
+    }
+
+    /**
+     * The readable form of the same identity: the first 4 bytes of the v1 seed,
+     * upper-case hex in two groups (`F4A4-595C`). Recognition aid, not a check.
+     */
+    fun code(accountId: String): String? {
+        if (!valid(accountId)) return null
+        val hex = seed(accountId).take(4).joinToString("") { "%02X".format(it.toInt() and 0xff) }
+        return hex.substring(0, 4) + "-" + hex.substring(4)
+    }
+
+    /** Null means unavailable/invalid: the view draws a neutral placeholder, not an identity. */
+    fun generate(accountId: String): List<Int>? {
+        if (!valid(accountId)) return null
+        val hash = MessageDigest.getInstance("SHA-256")
+        val seed = seed(accountId)
         val cells = ArrayList<Int>(CELL_COUNT)
         var counter = 0
         while (cells.size < CELL_COUNT) {

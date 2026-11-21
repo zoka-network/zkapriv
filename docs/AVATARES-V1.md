@@ -67,25 +67,27 @@ para las identidades existentes; no cambiar sus constantes silenciosamente.
 
 `ZKAPrivAvatar(accountId: String, modifier: Modifier)` dibuja exclusivamente
 el patrón producido por `AvatarMosaic.generate`. Wallets lo muestra a 40 dp en
-cada fila y la hoja Network lo pone en el centro del anillo (19 % del ancho).
+cada fila, la credencial del inicio a 64 dp y la hoja Network en el centro del anillo (19 % del ancho).
 **El selector de cuenta del inicio no lleva mosaico** (pedido del 14/11): es
 una cápsula fina con el ícono de billetera, el nombre y la dirección corta.
 El tema claro conserva su elección de colores, pero no modifica el avatar.
 
-### Inicio limpio y hojas (20/11/2026)
+### Inicio y credencial (20/11/2026)
 
-El inicio quedó en: selector fino, engranaje, saldo (tocarlo lo oculta) y la
-curva de movimientos con un degradé **de la línea hacia arriba** que lleva una
-lluvia de dígitos 0-9. Lo quieto (degradé, resplandor y campo tenue de
-dígitos) se arma una vez por tamaño y curva; solo las gotas se redibujan, a
-unos 16 cuadros por segundo, y se frenan sin animaciones (ajuste de la app o
-del sistema), en segundo plano y en las pruebas.
+El inicio quedó en: título «ZOKA QUANTIC · v3 Testnet» con el engranaje, la
+cuenta en **una línea fina a lo ancho** (ícono, nombre, dirección corta y
+flecha), el saldo **grande y fino** (Montserrat Light, SIL OFL 1.1, licencia
+en `docs/licenses`) con el logo chico y en gris en lugar de «ZKA» (tocarlo
+lo oculta), y debajo la **credencial**: una tarjeta negra en los dos temas con
+el mosaico como **ID único**, su código, el nombre, la dirección corta, la
+cantidad de direcciones y el bloque desde el que la billetera lee la cadena
+(1 si se restauró). Se quitaron la curva, la variación y la lluvia de dígitos:
+no hay precio que seguir.
 
-La curva ya no desaparece por un dato raro: lo sin confirmar o de tipo
-desconocido se salta, un historial cortado deja el saldo de antes en 0 y, sin
-movimientos, la línea va plana. Con el saldo oculto también va plana. La
-variación (↗ % y ZKA) solo aparece con movimientos. Sigue sin ser
-rentabilidad de mercado.
+**Código del ID único (v1):** los primeros 4 bytes de la semilla v1 del
+mosaico, en hexadecimal mayúscula y en dos grupos (`XXXX-XXXX`). Vector:
+`public-account:alice` → `F4A4-595C`. Igual que el mosaico, ayuda a reconocer
+una cuenta; no verifica destinatarios ni reemplaza comprobar la dirección.
 
 La barra tiene cinco accesos: Wallet, Receive, Send, **Network** (el anillo) y
 Activity. Receive y Network no cambian de pantalla: abren `WindowSheet`, una

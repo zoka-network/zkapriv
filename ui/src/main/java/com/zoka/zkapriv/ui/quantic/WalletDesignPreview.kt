@@ -77,6 +77,7 @@ fun WalletDesignPreview(dark: Boolean, scenario: String) {
                             }, false, activeEntry.name, onWallets = { selected = "wallets" },
                             onSettings = { selected = "settings" }, onSendProgress = {},
                             accountId = if (selected == "home-loading") "" else activeEntry.publicAccountId,
+                            birth = if (selected == "home-loading") 0 else 1_280_000, addressCount = addresses.size,
                         )
                         "avatar-sizes" -> ZkScreen(title = "Account mosaics") {
                             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,

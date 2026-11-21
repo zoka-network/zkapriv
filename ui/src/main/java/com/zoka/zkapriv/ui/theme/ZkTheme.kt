@@ -113,8 +113,6 @@ data class ZkColors(
 
 /** Rosa de marca sobre fondo oscuro: el de zoka.network. */
 private val QuanticPink = Color(0xFFF2ABD0)
-/** Verde del panel de referencia; solo una variación positiva del saldo reciente. */
-val DashboardGain = Color(0xFF00D414)
 /** El de los enlaces de la web: un punto más apagado, para letras. */
 private val QuanticPinkSoft = Color(0xFFE8BDD5)
 /** Rosa de marca sobre blanco: 6,3:1. */
@@ -239,11 +237,8 @@ val MonoFamily = FontFamily(
     Font(R.font.jetbrainsmono_medium, FontWeight.Medium),
 )
 
-/** Montserrat (SIL OFL 1.1, docs/licenses): solo para el saldo del inicio, de ceros redondos como la maqueta. */
-val DisplayFamily = FontFamily(
-    Font(R.font.montserrat_semibold, FontWeight.SemiBold),
-    Font(R.font.montserrat_bold, FontWeight.Bold),
-)
+/** Montserrat Light (SIL OFL 1.1, docs/licenses): solo para el saldo del inicio, grande y fino. */
+val DisplayFamily = FontFamily(Font(R.font.montserrat_light, FontWeight.Light))
 
 /** Alternativas de Inter que usa el diseño. */
 private const val INTER_FEATURES = "ss01, cv11"

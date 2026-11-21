@@ -3,6 +3,7 @@ package com.zoka.zkapriv
 import android.content.Intent
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
@@ -78,13 +79,18 @@ class AvatarInstrumentedTest {
         assertTrue(half.bottom.value > 0f)
     }
 
-    @Test fun hidingBalanceFlattensTheChartAndHidesTheChange() = preview("home") {
-        compose.onNodeWithContentDescription("Recent balance chart").assertExists()
+    @Test fun credentialShowsTheUniqueIdOfTheActiveAccount() = preview("home") {
+        fun code() = compose.onNodeWithTag("unique-id").fetchSemanticsNode()
+            .config[SemanticsProperties.Text].joinToString("") { it.text }
+        val main = code()
+        assertTrue(main, Regex("[0-9A-F]{4}-[0-9A-F]{4}").matches(main))
+        compose.onNodeWithTag("credential-avatar", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithContentDescription("Hide balance").performClick()
-        compose.onNodeWithContentDescription("Recent balance chart").assertDoesNotExist()
-        compose.onNodeWithContentDescription("Balance chart").assertExists()
-        compose.onNodeWithContentDescription("Show balance").performClick()
-        compose.onNodeWithContentDescription("Recent balance chart").assertExists()
+        compose.onNodeWithContentDescription("Show balance").assertExists()
+        compose.onNodeWithTag("unique-id").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Change wallet").performClick()
+        compose.onNodeWithText("Savings").performClick()
+        assertNotEquals(main, code())
     }
 
     @Test fun selectingAnotherAccountChangesItsAvatarAndGoingBackRestoresIt() = preview("sheet-network") {
@@ -96,7 +102,8 @@ class AvatarInstrumentedTest {
         compose.onNodeWithContentDescription("Minimize").performClick()
         compose.onNodeWithContentDescription("Change wallet").performClick()
         compose.onNodeWithText("Savings").performClick()
-        compose.onNodeWithText("Savings").assertIsDisplayed()
+        // En el inicio el nombre está en el selector y en la credencial.
+        compose.onNodeWithTag("account-chip").assertTextContains("Savings", substring = true)
         compose.onNodeWithContentDescription("Network").performClick()
         assertNotEquals(main, pattern())
         compose.onNodeWithContentDescription("Minimize").performClick()

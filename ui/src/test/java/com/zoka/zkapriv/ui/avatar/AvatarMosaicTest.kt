@@ -11,6 +11,12 @@ class AvatarMosaicTest {
             AvatarMosaic.generate("public-account:alice")!!.joinToString(""))
     }
 
+    @Test fun readableCodeComesFromTheSameSeed() {
+        // Python: sha256(b"ZKAPriv/avatar/v1/seed" + NUL + b"public-account:alice").digest()[:4]
+        assertEquals("F4A4-595C", AvatarMosaic.code("public-account:alice"))
+        assertNull(AvatarMosaic.code(""))
+        assertNull(AvatarMosaic.code("bad id"))
+    }
     @Test fun all81CellsUseTheFixedPalette() {
         val cells = AvatarMosaic.generate("public-account:bob")!!
         assertEquals(81, cells.size)

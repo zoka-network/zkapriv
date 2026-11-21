@@ -251,6 +251,8 @@ class WalletViewModel @Inject constructor(
     // ── Direcciones ──────────────────────────────────────────────────────────
 
     fun shortAddress(): String = wallet.shortAddress()
+    /** El bloque desde el que la billetera activa lee la cadena (1 si se restauró). */
+    fun birth(): Int = vault.birth()
     fun fullAddress(): String = wallet.fullAddress()
     suspend fun viewKey(expectedWalletId: String, scope: ViewKeyScope = ViewKeyScope.INCOMING): String =
         wallet.viewKey(expectedWalletId, scope)
