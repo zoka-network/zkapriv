@@ -239,6 +239,12 @@ val MonoFamily = FontFamily(
     Font(R.font.jetbrainsmono_medium, FontWeight.Medium),
 )
 
+/** Montserrat (SIL OFL 1.1, docs/licenses): solo para el saldo del inicio, de ceros redondos como la maqueta. */
+val DisplayFamily = FontFamily(
+    Font(R.font.montserrat_semibold, FontWeight.SemiBold),
+    Font(R.font.montserrat_bold, FontWeight.Bold),
+)
+
 /** Alternativas de Inter que usa el diseño. */
 private const val INTER_FEATURES = "ss01, cv11"
 

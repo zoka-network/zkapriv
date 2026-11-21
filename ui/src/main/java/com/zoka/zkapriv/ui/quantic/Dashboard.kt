@@ -1,14 +1,14 @@
 package com.zoka.zkapriv.ui.quantic
 
-import android.graphics.Paint
-import android.graphics.Typeface
-import androidx.compose.animation.core.withInfiniteAnimationFrameMillis
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Settings
@@ -19,20 +19,20 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -40,18 +40,22 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.zoka.zkapriv.network.quantic.QuanticState
+import com.zoka.zkapriv.ui.R
 import com.zoka.zkapriv.ui.avatar.ZKAPrivAvatar
 import com.zoka.zkapriv.ui.theme.DashboardGain
-import com.zoka.zkapriv.ui.theme.InterFamily
+import com.zoka.zkapriv.ui.theme.DisplayFamily
 import com.zoka.zkapriv.ui.theme.Zk
-import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.math.abs
-import kotlin.math.ceil
-import kotlin.math.floor
+
+/** La red de esta compilación, como la muestra el selector de cuenta. */
+private const val NETWORK_LINE_1 = "ZOKA QUANTIC"
+private const val NETWORK_LINE_2 = "v3 Testnet"
 
 @Composable
 fun HomeScreen(vm: WalletViewModel, onWallets: () -> Unit, onSettings: () -> Unit, onSendProgress: () -> Unit) {
@@ -65,9 +69,10 @@ fun HomeScreen(vm: WalletViewModel, onWallets: () -> Unit, onSettings: () -> Uni
 }
 
 /**
- * El inicio, limpio: la cuenta arriba, el saldo y la curva de los movimientos
- * con el degradé y la lluvia de dígitos encima de la línea. Los datos de la
- * red (el anillo) se abren en una hoja desde la barra de abajo.
+ * El inicio, limpio: la cuenta arriba (a lo largo, con la red), el saldo con
+ * el logo en lugar de «ZKA» y la curva de los movimientos con un degradé de
+ * la línea hacia arriba. Los datos de la red (el anillo) se abren en una hoja
+ * desde la barra de abajo.
  */
 @Composable
 internal fun HomeContent(state: QuanticState, sending: Boolean, walletName: String,
@@ -83,8 +88,8 @@ internal fun HomeContent(state: QuanticState, sending: Boolean, walletName: Stri
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 10.dp),
                 verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.weight(1f)) { AccountChip(walletName, accountId, onWallets) }
-                Spacer(Modifier.width(12.dp))
+                AccountChip(walletName, accountId, onWallets, Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
                 Box(Modifier.size(48.dp).clip(CircleShape).clickable(role = Role.Button, onClick = onSettings),
                     contentAlignment = Alignment.Center) {
                     Icon(Icons.Outlined.Settings, "Settings", Modifier.size(28.dp), tint = c.text)
@@ -101,62 +106,88 @@ internal fun HomeContent(state: QuanticState, sending: Boolean, walletName: Stri
     }
 }
 
-/** La cuenta, fina como en la referencia: ícono de billetera, nombre y dirección corta. */
+/**
+ * La cuenta, fina y a lo largo: ícono de billetera, nombre y dirección corta;
+ * a la derecha, la red («ZOKA QUANTIC · v3 Testnet») y la flecha.
+ */
 @Composable
-private fun AccountChip(name: String, accountId: String, onClick: () -> Unit) {
+private fun AccountChip(name: String, accountId: String, onClick: () -> Unit, modifier: Modifier) {
     val c = Zk.colors
-    Row(Modifier.widthIn(max = 250.dp).border(1.dp, c.textSoft.copy(alpha = 0.7f), CircleShape).clip(CircleShape)
+    Row(modifier.border(1.dp, c.textSoft.copy(alpha = 0.7f), CircleShape).clip(CircleShape)
         .clickable(role = Role.Button, onClick = onClick).padding(start = 14.dp, end = 10.dp, top = 4.dp, bottom = 4.dp)
         .testTag("account-chip"),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         DashboardNavIcon("home", c.text, Modifier.size(18.dp))
-        Column(Modifier.weight(1f, fill = false)) {
+        Column(Modifier.weight(1f)) {
             Text(name, color = c.text, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 15.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(if (accountId.isEmpty()) "Loading address…" else accountId.take(7) + "…" + accountId.takeLast(4),
                 color = c.textSoft, fontSize = 10.5.sp, lineHeight = 12.sp, maxLines = 1)
         }
+        Column(horizontalAlignment = Alignment.End) {
+            Text(buildAnnotatedString {
+                append(NETWORK_LINE_1.substringBefore(' ') + " ")
+                withStyle(SpanStyle(color = c.accent)) { append(NETWORK_LINE_1.substringAfter(' ')) }
+            }, color = c.text, fontWeight = FontWeight.SemiBold, fontSize = 9.sp, lineHeight = 12.sp,
+                letterSpacing = 0.9.sp, maxLines = 1, softWrap = false)
+            Text(NETWORK_LINE_2, color = c.textSoft, fontSize = 10.5.sp, lineHeight = 12.sp, maxLines = 1, softWrap = false)
+        }
         Icon(Icons.Outlined.ExpandMore, "Change wallet", tint = c.text, modifier = Modifier.size(18.dp))
     }
 }
+
+/**
+ * El logo de ZKAPriv en lugar de la palabra «ZKA», del alto de los números.
+ * El lugar reservado es un poco más ancho que el logo: deja aire a cada lado.
+ */
+private fun zkaLogo(height: TextUnit) = InlineTextContent(
+    Placeholder(width = (height.value * (600f / 740f + 0.36f)).em, height = height,
+        placeholderVerticalAlign = PlaceholderVerticalAlign.AboveBaseline),
+) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Image(painterResource(R.drawable.zkapriv_logo_mark), "ZKA", Modifier.fillMaxHeight().aspectRatio(600f / 740f))
+    }
+}
+
+/** Ancho aproximado en «em» de un monto en Montserrat Bold, con el logo al final. */
+private fun amountEms(text: String): Float =
+    text.sumOf { ch -> when { ch.isDigit() -> 0.70; ch == '•' -> 0.45; ch == '—' -> 0.9; else -> 0.30 } }.toFloat() + 1.0f
 
 @Composable
 private fun DashboardBalance(state: QuanticState, hidden: Boolean, history: BalanceHistory?, onToggle: () -> Unit) {
     val c = Zk.colors
     val amount = when { hidden -> "••••••"; !state.loaded -> "—"; else -> displayZka(state.balanceAtoms) }
-    // Un halo del color del fondo detrás del saldo: la lluvia pasa por atrás sin tapar los números.
-    val halo = c.background
-    Column(Modifier.fillMaxWidth().drawBehind {
-        val radius = size.height * 0.9f
-        scale(scaleX = size.width * 0.62f / radius, scaleY = 1.15f, pivot = center) {
-            drawCircle(Brush.radialGradient(listOf(halo.copy(alpha = 0.92f), halo.copy(alpha = 0.6f), halo.copy(alpha = 0f)),
-                center, radius), radius, center)
-        }
-    }, horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 18.dp).clip(CircleShape)
             .clickable(role = Role.Button, onClick = onToggle)
             .semantics { contentDescription = if (hidden) "Show balance" else "Hide balance" }) {
             val fontScale = LocalDensity.current.fontScale
-            val fontSize = (maxWidth.value / ((amount.length + 3) * 0.64f) / fontScale).coerceIn(18f, 38f)
+            val fontSize = (maxWidth.value / amountEms(amount) / fontScale).coerceIn(20f, 56f)
             Text(buildAnnotatedString {
-                withStyle(SpanStyle(fontSize = fontSize.sp, fontWeight = FontWeight.Bold)) { append(amount) }
-                withStyle(SpanStyle(fontSize = (fontSize * 0.72f).sp, fontWeight = FontWeight.Bold)) { append(" ZKA") }
-            }, Modifier.fillMaxWidth(), color = c.text, fontFamily = InterFamily, textAlign = TextAlign.Center,
-                maxLines = 1, softWrap = false, fontSize = fontSize.sp, lineHeight = (fontSize * 1.15f).sp)
+                append(amount)
+                appendInlineContent("zka", "ZKA")
+            }, Modifier.fillMaxWidth(), color = c.text, fontFamily = DisplayFamily, fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center, maxLines = 1, softWrap = false, fontSize = fontSize.sp,
+                lineHeight = (fontSize * 1.15f).sp, letterSpacing = (-0.5).sp,
+                inlineContent = mapOf("zka" to zkaLogo(0.72.em)))
         }
         // La variación solo con movimientos reales: sin ellos no hay nada que comparar.
         if (history != null && history.balances.size > 1 && !hidden) {
             val change = history.change
             val sign = if (change >= 0) "+" else "−"
             Text(buildAnnotatedString {
-                withStyle(SpanStyle(color = if (change < 0) c.danger else if (c.dark) DashboardGain else c.success,
-                    fontWeight = FontWeight.SemiBold)) {
+                withStyle(SpanStyle(color = if (change < 0) c.danger else if (c.dark) DashboardGain else c.success)) {
                     append(if (change >= 0) "↗ " else "↘ ")
                     history.percent?.let { append(String.format(Locale.US, "%.2f%%  ", abs(it))) }
                     Unit
                 }
-                withStyle(SpanStyle(color = c.textSoft)) { append("($sign${displayZka(abs(change))} ZKA)") }
-            }, fontSize = 15.sp, lineHeight = 19.sp, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
+                withStyle(SpanStyle(color = c.textSoft)) {
+                    append("($sign${displayZka(abs(change))}")
+                    appendInlineContent("zka", "ZKA")
+                    append(")")
+                }
+            }, fontFamily = DisplayFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 20.sp,
+                maxLines = 1, modifier = Modifier.padding(top = 6.dp), inlineContent = mapOf("zka" to zkaLogo(0.72.em)))
         }
         if (!hidden && state.loaded && (state.immatureAtoms > 0 || state.reservedAtoms > 0)) {
             Text(listOfNotNull(
@@ -172,7 +203,7 @@ private fun DashboardBalance(state: QuanticState, hidden: Boolean, history: Bala
 private const val CURVE_TOP = 0.46f
 private const val CURVE_BOTTOM = 0.76f
 
-/** Línea de los movimientos y lo que queda encima: el degradé y la lluvia de dígitos. */
+/** Línea de los movimientos y lo que queda encima, donde va el degradé. */
 private class CurveGeometry(val line: Path, val above: Path, val lowest: Float)
 
 private fun curveGeometry(values: List<Long>?, size: Size): CurveGeometry {
@@ -201,87 +232,20 @@ private fun curveGeometry(values: List<Long>?, size: Size): CurveGeometry {
     return CurveGeometry(line, above, points.maxOf { it.y })
 }
 
-/** Un número entero chico y estable para la posición de cada dígito. */
-private fun mix(a: Int, b: Int, c: Int = 0): Int {
-    var h = a * 0x27d4eb2d xor (b * 0x165667b1) xor (c * 0x1f3d5b79)
-    h = h xor (h ushr 15); h *= 0x2c1b3c6d; h = h xor (h ushr 12)
-    return h and 0x7fffffff
-}
-
-/**
- * El fondo del inicio. Lo quieto (degradé, resplandor de la línea y el campo
- * tenue de dígitos 0-9) se arma una vez por tamaño y curva; lo único que se
- * redibuja son las gotas que caen, a unos 16 cuadros por segundo. Sin
- * animaciones (ajuste de la app o del sistema) queda quieto.
- */
+/** El fondo del inicio: la curva con su resplandor y el degradé de la línea hacia arriba. Quieto. */
 @Composable
 private fun BalanceBackdrop(values: List<Long>?, modifier: Modifier) {
-    val c = Zk.colors
-    val ink = c.text
-    val animate = Zk.animations
-    var clock by remember { mutableLongStateOf(0L) }
-    if (animate) {
-        LaunchedEffect(Unit) {
-            val start = withInfiniteAnimationFrameMillis { it }
-            while (true) {
-                withInfiniteAnimationFrameMillis { clock = it - start }
-                delay(55)
-            }
-        }
-    }
-    val paint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE; textAlign = Paint.Align.CENTER } }
-    val density = LocalDensity.current
-    val stepX = with(density) { 14.dp.toPx() }
-    val stepY = with(density) { 15.dp.toPx() }
-    val glyph = with(density) { 7.5.dp.toPx() }
+    val ink = Zk.colors.text
     Box(modifier.semantics { contentDescription = if (values == null) "Balance chart" else "Recent balance chart" }
         .drawWithCache {
             val geo = curveGeometry(values, size)
-            val columns = ceil(size.width / stepX).toInt() + 1
-            val rows = ceil(geo.lowest / stepY).toInt() + 1
-            // Más visible cerca de la línea, sin desaparecer arriba.
-            fun fade(y: Float) = 0.35f + 0.65f * (y / geo.lowest).coerceIn(0f, 1f)
-            fun digit(col: Int, row: Int, salt: Int = 0) = ('0' + mix(col, row, salt) % 10).toString()
-            // Hasta el punto más bajo de la línea: lo de abajo nunca se ve.
-            val field = ImageBitmap(size.width.toInt().coerceAtLeast(1), ceil(geo.lowest).toInt().coerceAtLeast(1))
-            androidx.compose.ui.graphics.Canvas(field).nativeCanvas.apply {
-                paint.textSize = glyph
-                for (row in 0 until rows) for (col in 0 until columns) {
-                    val y = row * stepY + glyph
-                    paint.color = android.graphics.Color.argb((255 * 0.075f * fade(y)).toInt(), 255, 255, 255)
-                    drawText(digit(col, row), col * stepX + stepX / 2, y, paint)
-                }
-            }
             val wash = Brush.verticalGradient(listOf(ink.copy(alpha = 0f), ink.copy(alpha = 0.035f), ink.copy(alpha = 0.13f)),
                 startY = size.height * (CURVE_TOP - 0.42f), endY = geo.lowest)
-            val tint = ColorFilter.tint(ink, BlendMode.SrcIn)
             onDrawBehind {
                 clipPath(geo.above) {
                     drawRect(wash)
                     for ((width, alpha) in listOf(46.dp to 0.012f, 36.dp to 0.012f, 27.dp to 0.014f, 19.dp to 0.016f, 12.dp to 0.02f, 6.dp to 0.03f)) {
                         drawPath(geo.line, ink.copy(alpha = alpha), style = Stroke(width.toPx(), cap = StrokeCap.Round))
-                    }
-                    drawImage(field, colorFilter = tint)
-                    // Las gotas: una cabeza que baja por cada columna y una estela que se apaga.
-                    val t = clock
-                    if (t > 0) drawIntoCanvas { canvas ->
-                        paint.textSize = glyph
-                        val trail = 9
-                        for (col in 0 until columns) {
-                            val speed = stepY * (2.2f + (mix(col, 7) % 100) / 30f) // filas por segundo
-                            val period = (rows + trail) * stepY * (1.15f + (mix(col, 11) % 100) / 110f)
-                            val head = ((t / 1000f * speed + mix(col, 3) % 1000 / 1000f * period) % period)
-                            val headRow = floor(head / stepY).toInt()
-                            for (k in 0 until trail) {
-                                val row = headRow - k
-                                if (row < 0 || row >= rows) continue
-                                val y = row * stepY + glyph
-                                val strength = if (k == 0) 0.34f else 0.2f * (1f - k / trail.toFloat())
-                                paint.color = ink.copy(alpha = strength * fade(y)).toArgb()
-                                val text = if (k < 2) digit(col, row, (t / 140).toInt()) else digit(col, row)
-                                canvas.nativeCanvas.drawText(text, col * stepX + stepX / 2, y, paint)
-                            }
-                        }
                     }
                 }
                 for ((width, alpha) in listOf(7.dp to 0.06f, 3.5.dp to 0.14f)) {
