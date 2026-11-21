@@ -225,6 +225,7 @@ class WalletViewModel @Inject constructor(
             } catch (_: Exception) { null }
             if (list != null) {
                 _addresses.value = list
+                refreshWallets() // Incluye la identidad pública obtenida por el flujo existente.
                 for (address in list.filterNot { it.published }) {
                     val accepted = if (address.index == 0) publishAddress() else publishExtra(address.index)
                     if (accepted.getOrNull() == true) markPublished(address.index)

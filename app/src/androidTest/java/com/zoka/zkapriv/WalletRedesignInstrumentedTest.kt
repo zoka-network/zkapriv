@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -73,6 +74,6 @@ class WalletRedesignInstrumentedTest {
         // El teclado es una ventana del sistema y no usa el reloj de Compose.
         SystemClock.sleep(1000)
         compose.onNodeWithText("SAVE").assertIsDisplayed().performClick()
-        compose.onNodeWithText("PRIVATE BALANCE").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Hide balance").assertIsDisplayed()
     }
 }

@@ -113,6 +113,8 @@ data class ZkColors(
 
 /** Rosa de marca sobre fondo oscuro: el de zoka.network. */
 private val QuanticPink = Color(0xFFF2ABD0)
+/** Verde del panel de referencia; solo una variación positiva del saldo reciente. */
+val DashboardGain = Color(0xFF00D414)
 /** El de los enlaces de la web: un punto más apagado, para letras. */
 private val QuanticPinkSoft = Color(0xFFE8BDD5)
 /** Rosa de marca sobre blanco: 6,3:1. */

@@ -35,5 +35,6 @@ internal fun displayHashrate(hps: Long): String = when {
     hps <= 0 -> "—"
     hps < 1_000 -> "$hps H/s"
     hps < 1_000_000 -> String.format(Locale.US, "%.1f kH/s", hps / 1_000.0)
-    else -> String.format(Locale.US, "%.1f MH/s", hps / 1_000_000.0)
+    hps < 1_000_000_000 -> String.format(Locale.US, "%.1f MH/s", hps / 1_000_000.0)
+    else -> String.format(Locale.US, "%.2f GH/s", hps / 1_000_000_000.0)
 }

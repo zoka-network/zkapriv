@@ -1,0 +1,48 @@
+package com.zoka.zkapriv.ui.avatar
+
+import java.security.MessageDigest
+
+/**
+ * Public visual identity, version 1. No Android, storage, network or wallet dependencies.
+ * Input is the canonical, case-sensitive public identifier, never a local wallet id.
+ * Do not change these domains, palette order or byte mapping in a future version.
+ */
+object AvatarMosaic {
+    const val VERSION = 1
+    const val SIDE = 9
+    const val CELL_COUNT = SIDE * SIDE
+    private const val SEED_DOMAIN = "ZKAPriv/avatar/v1/seed\u0000"
+    private const val GRID_DOMAIN = "ZKAPriv/avatar/v1/grid\u0000"
+
+    // Fixed sRGB: black, charcoal, light grey, white, Quantic pink.
+    val palette: List<Long> = listOf(0xFF080809, 0xFF303036, 0xFFAAAAAF, 0xFFFAFAFA, 0xFFF2ABD0)
+    const val BACKGROUND: Long = 0xFF101012
+
+    /** Null means unavailable/invalid: the view draws a neutral placeholder, not an identity. */
+    fun generate(accountId: String): List<Int>? {
+        if (accountId.length !in 1..256 || accountId.any {
+                it !in 'a'..'z' && it !in 'A'..'Z' && it !in '0'..'9' && it !in ":._-"
+            }) return null
+        val hash = MessageDigest.getInstance("SHA-256")
+        hash.update(SEED_DOMAIN.toByteArray(Charsets.UTF_8))
+        val seed = hash.digest(accountId.toByteArray(Charsets.UTF_8))
+        val cells = ArrayList<Int>(CELL_COUNT)
+        var counter = 0
+        while (cells.size < CELL_COUNT) {
+            hash.update(GRID_DOMAIN.toByteArray(Charsets.UTF_8))
+            hash.update(seed)
+            val block = hash.digest(byteArrayOf(
+                (counter ushr 24).toByte(), (counter ushr 16).toByte(),
+                (counter ushr 8).toByte(), counter.toByte(),
+            ))
+            counter++
+            for (byte in block) {
+                val value = byte.toInt() and 0xff
+                // 255 is divisible by 5: rejection avoids a modulo bias.
+                if (value < 255) cells.add(value % 5)
+                if (cells.size == CELL_COUNT) break
+            }
+        }
+        return cells.toList()
+    }
+}

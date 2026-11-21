@@ -172,7 +172,7 @@ fun QuanticApp(vm: WalletViewModel, locked: Boolean, onUnlocked: () -> Unit,
                     HomeScreen(
                         vm,
                         onWallets = { nav.navigate("wallets") { launchSingleTop = true } },
-                        onScan = { nav.navigate("scan") { launchSingleTop = true } },
+                        onSettings = { selectTab("settings") },
                         onNetwork = { nav.navigate("network") { launchSingleTop = true } },
                         onSendProgress = { selectTab("send") },
                     )

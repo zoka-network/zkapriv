@@ -32,6 +32,7 @@ class HomeFormatTest {
         assertEquals("841 H/s", displayHashrate(841))
         assertEquals("1.5 kH/s", displayHashrate(1_501))
         assertEquals("2.4 MH/s", displayHashrate(2_400_000))
+        assertEquals("3.48 GH/s", displayHashrate(3_480_000_000))
         assertEquals("—", displayHashrate(0))
     }
 }

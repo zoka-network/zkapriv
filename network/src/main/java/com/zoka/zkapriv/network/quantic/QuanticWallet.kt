@@ -74,6 +74,8 @@ data class QuanticState(
      * las páginas). 0 si no se sabe: en el Modo Tor no se le pregunta.
      */
     val hashrateHps: Long = 0,
+    /** Solo presentación, del mismo /status; null si no se conoce (también con Tor). */
+    val difficultyBits: Int? = null,
 ) {
     val balanceAtoms: Long get() = spendableAtoms + immatureAtoms + reservedAtoms
     /** Avance de la lectura de la cadena, de 0 a 1. */
@@ -265,7 +267,9 @@ class QuanticWallet @Inject constructor(
                 reply = ZokaStark.confirmCheckpoint(phrase, vault.stateDir, checkpoint)
             }
             // Solo para mostrar: si falla, el saldo ya quedó leído y verificado.
-            networkHashrate()?.let { hps -> _state.update { it.copy(hashrateHps = hps) } }
+            networkDisplayStats()?.let { stats ->
+                _state.update { it.copy(hashrateHps = stats.hashrateHps, difficultyBits = stats.difficultyBits) }
+            }
             reply to "https"
         } catch (https: Exception) {
             if (https is CancellationException) throw https
@@ -280,13 +284,12 @@ class QuanticWallet @Inject constructor(
         }
     }
 
-    /** `hashrate_estimate_hps` del explorador; null si no contesta. */
-    private fun networkHashrate(): Long? = runCatching {
+    /** Datos de presentación del pedido que ya hacía la app; no agrega conexiones. */
+    private fun networkDisplayStats(): NetworkDisplayStats? = runCatching {
         val request = Request.Builder().url("https://api.zokascan.cc/status").get().build()
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return null
-            JSONObject(response.body?.string() ?: return null).optLong("hashrate_estimate_hps", 0)
-                .takeIf { it > 0 }
+            NetworkDisplayStats.from(JSONObject(response.body?.string() ?: return null))
         }
     }.getOrNull()
 
@@ -374,7 +377,10 @@ class QuanticWallet @Inject constructor(
         busy.withLock {
             val id = vault.activeId()
             val list = ZokaStark.addresses(phrase(), vault.stateDir, vault.birth()).getJSONArray("addresses")
-            (0 until list.length()).map { list.getJSONObject(it).toAddress(id) }
+            (0 until list.length()).map { list.getJSONObject(it).toAddress(id) }.also { addresses ->
+                // Solo la principal, nunca la dirección extra seleccionada en Receive.
+                addresses.firstOrNull { it.index == 0 }?.let { vault.rememberPublicAccount(id, it.short) }
+            }
         }
     }
 

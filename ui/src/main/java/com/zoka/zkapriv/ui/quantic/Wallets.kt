@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.zoka.zkapriv.ui.avatar.ZKAPrivAvatar
 import com.zoka.zkapriv.security.vault.QuanticVault
 import com.zoka.zkapriv.ui.components.CheckBadge
 import com.zoka.zkapriv.ui.components.GlassIconButton
@@ -154,7 +155,7 @@ private fun WalletRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        IconSquare(Icons.Outlined.AccountBalanceWallet, active = active, size = 44.dp)
+        ZKAPrivAvatar(entry.publicAccountId, Modifier.size(40.dp))
         Column(Modifier.weight(1f)) {
             Text(entry.name, style = MaterialTheme.typography.titleMedium, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(if (active) "In use" else "Tap to use", style = MaterialTheme.typography.bodySmall, color = if (active) c.accent else c.textMuted)

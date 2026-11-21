@@ -49,7 +49,7 @@ class QuanticVault @Inject constructor(
     // ── Billeteras ───────────────────────────────────────────────────────────
 
     /** Una billetera guardada en este teléfono. */
-    data class WalletEntry(val id: String, val name: String)
+    data class WalletEntry(val id: String, val name: String, val publicAccountId: String = "")
 
     /** Los ids en el orden en que se agregaron; la de antes es `main`. */
     private fun ids(): List<String> {
@@ -64,7 +64,18 @@ class QuanticVault @Inject constructor(
     private fun stateDirOf(id: String): String =
         context.filesDir.resolve(if (id == MAIN) "stark" else "stark-$id").absolutePath
 
-    fun wallets(): List<WalletEntry> = ids().map { WalletEntry(it, walletName(it)) }
+    fun wallets(): List<WalletEntry> = ids().map {
+        WalletEntry(it, walletName(it), prefs.getString(key(KEY_PUBLIC_ACCOUNT, it), "").orEmpty())
+    }
+
+    /** Metadato público ya leído por Receive. Nunca deriva claves para dibujar un avatar. */
+    fun rememberPublicAccount(id: String, primaryShortAddress: String) {
+        if (primaryShortAddress.isBlank() || id !in ids()) return
+        val key = key(KEY_PUBLIC_ACCOUNT, id)
+        if (prefs.getString(key, null) != primaryShortAddress) {
+            prefs.edit().putString(key, primaryShortAddress).apply()
+        }
+    }
 
     fun walletName(id: String): String =
         prefs.getString("$KEY_NAME.$id", null) ?: if (id == MAIN) "Main wallet" else "Wallet"
@@ -125,6 +136,7 @@ class QuanticVault @Inject constructor(
             .remove(key(KEY_PHRASE, id))
             .remove(key(KEY_BIRTH, id))
             .remove(key(KEY_PUBLISHED, id))
+            .remove(key(KEY_PUBLIC_ACCOUNT, id))
             .apply { (1..MAX_EXTRA_ADDRESSES).forEach { remove(extraKey(id, it)) } }
             .remove("$KEY_NAME.$id")
             .putString(KEY_WALLETS, rest.joinToString(","))
@@ -151,6 +163,7 @@ class QuanticVault @Inject constructor(
             .putInt(KEY_BIRTH, birth)
             .putBoolean(KEY_READY, false)
             .putBoolean(KEY_PUBLISHED, false)
+            .remove(KEY_PUBLIC_ACCOUNT)
             .apply { (1..MAX_EXTRA_ADDRESSES).forEach { remove(extraKey(MAIN, it)) } }
             .putString(KEY_WALLETS, MAIN)
             .putString(KEY_ACTIVE, MAIN)
@@ -297,6 +310,7 @@ class QuanticVault @Inject constructor(
         private const val KEY_WALLETS = "wallets"
         private const val KEY_ACTIVE = "active_wallet"
         private const val KEY_NAME = "name"
+        private const val KEY_PUBLIC_ACCOUNT = "public_account_v1"
         const val MAIN = "main"
         const val MAX_NAME = 24
         /** Además de la principal: el motor admite ocho direcciones por billetera. */

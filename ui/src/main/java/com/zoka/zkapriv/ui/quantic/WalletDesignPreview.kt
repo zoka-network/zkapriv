@@ -3,6 +3,12 @@ package com.zoka.zkapriv.ui.quantic
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
+import com.zoka.zkapriv.ui.avatar.ZKAPrivAvatar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -38,20 +44,42 @@ fun WalletDesignPreview(dark: Boolean, scenario: String) {
         ))
     }
     val sample = remember { sampleState() }
+    var activeWallet by remember { mutableStateOf("main") }
+    val previewWallets = remember { listOf(
+        QuanticVault.WalletEntry("main", "Main Wallet", sampleAddress(0).short),
+        QuanticVault.WalletEntry("a1b2c3d4", "Savings", sampleAddress(1).short),
+    ) }
+    val activeEntry = previewWallets.first { it.id == activeWallet }
+    val home = remember { sampleHomeState() }
     val words = remember { List(23) { "abandon" } + "art" }
     val startedAt = remember { System.currentTimeMillis() - 12_000 }
     val back = { selected = "home" }
     val pinCheck: (String) -> QuanticVault.PinCheck = { QuanticVault.PinCheck.Wrong(4) }
-    val tabs = selected in walletRoutes || selected == "receive-eight"
+    val tabs = selected in walletRoutes || selected == "receive-eight" || selected.startsWith("home-")
     ZkTheme(darkTheme = theme != ThemeMode.LIGHT, animations = animations) {
         Column(Modifier.fillMaxSize()) {
             CompositionLocalProvider(LocalWalletTabs provides tabs) {
                 Box(Modifier.weight(1f)) {
                     when (selected) {
-                        "home" -> HomeContent(
-                            sample, false, "Main wallet", onWallets = { selected = "wallets" },
-                            onScan = { selected = "scan" }, onNetwork = { selected = "network" }, onSendProgress = {},
+                        "home", "home-loading", "home-tor", "home-large" -> HomeContent(
+                            when (selected) {
+                                "home-loading" -> QuanticState()
+                                "home-tor" -> home.copy(torEnabled = true)
+                                "home-large" -> home.copy(spendableAtoms = 5_000_000_009_200)
+                                else -> home
+                            }, false, activeEntry.name, onWallets = { selected = "wallets" },
+                            onSettings = { selected = "settings" }, onNetwork = { selected = "network" }, onSendProgress = {},
+                            accountId = if (selected == "home-loading") "" else activeEntry.publicAccountId,
                         )
+                        "avatar-sizes" -> ZkScreen(title = "Account mosaics") {
+                            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                                listOf(40, 64, 80).forEach { size ->
+                                    ZKAPrivAvatar("public-account:alice", Modifier.size(size.dp).testTag("avatar-$size"))
+                                }
+                                ZKAPrivAvatar("", Modifier.size(40.dp).testTag("avatar-empty"))
+                            }
+                        }
                         "welcome" -> WelcomeScreen({ selected = "backup" }, { selected = "restore" })
                         "backup" -> BackupPhraseScreen(words, back) { selected = "verify" }
                         "verify" -> VerifyPhraseScreen(words, back) { selected = "pin" }
@@ -67,9 +95,9 @@ fun WalletDesignPreview(dark: Boolean, scenario: String) {
                         }
                         "scan" -> ScannerOverlayPreview()
                         "wallets" -> WalletsContent(
-                            listOf(QuanticVault.WalletEntry("main", "Main wallet"), QuanticVault.WalletEntry("a1b2c3d4", "Savings")),
-                            active = "main", busy = false, sending = false,
-                            onBack = back, onSelect = {}, onEdit = { selected = "wallet-edit" },
+                            previewWallets,
+                            active = activeWallet, busy = false, sending = false,
+                            onBack = back, onSelect = { activeWallet = it; back() }, onEdit = { selected = "wallet-edit" },
                             onCreate = { selected = "backup" }, onRestore = { selected = "restore" },
                         )
                         "wallet-edit" -> {
@@ -125,5 +153,19 @@ private fun sampleState(): QuanticState {
             QuanticMovement("b2".repeat(32), 3310, now - 26 * 3_600, "sent", 48_000_000, 200, "", 712),
             QuanticMovement("c3".repeat(32), 1290, now - 9 * 24 * 3_600, "mined", 12_000_000, 0, "", 2_732),
         ),
+    )
+}
+
+/** Datos de demostración; no representan saldo ni transacciones del usuario. */
+private fun sampleHomeState(): QuanticState {
+    val amounts = listOf(840, 890, 880, 1010, 990, 1090, 880, 930, 1040, 940, 970, 1000, 880, 960, 990, 1040, 1000)
+    val now = System.currentTimeMillis() / 1000
+    return sampleState().copy(
+        spendableAtoms = 1_000_000_000, immatureAtoms = 0,
+        height = 1284567, tip = 1284567, hashrateHps = 3_480_000_000, difficultyBits = 29,
+        history = amounts.zipWithNext().mapIndexed { i, (a, b) ->
+            QuanticMovement("preview-$i", 1284500 + i, now - (amounts.size - i) * 3600,
+                if (b >= a) "received" else "sent", kotlin.math.abs(b - a) * 1_000_000L, 0, "", 67 - i)
+        },
     )
 }
