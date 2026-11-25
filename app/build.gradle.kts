@@ -23,8 +23,8 @@ android {
         applicationId = "com.zoka.zkapriv"
         minSdk = 26
         targetSdk = 36
-        versionCode = 19
-        versionName = "4.0.0"
+        versionCode = 21
+        versionName = "4.0.1"
         manifestPlaceholders["appLabel"] = "ZKAPriv"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
