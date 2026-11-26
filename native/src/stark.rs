@@ -38,6 +38,7 @@ use zeroize::Zeroizing;
 use zoka::quantic::{
     stark::{
         protocol::{
+            integrated::{tag_memo, IntegratedAddress},
             ledger::{conventional_fee, ATOMS},
             light::{LightWallet, Movement},
             scan::ScanPage2,
@@ -394,6 +395,17 @@ fn check_address(json: &str) -> Result<String, String> {
         "full"
     } else if ShortAddress::decode(text, network).is_ok() {
         "short"
+    } else if let Ok(integrated) = IntegratedAddress::decode(text, network) {
+        // La de un exchange: su corta y el código de cliente, que el pago
+        // lleva al principio del memo. En texto: un u64 no entra en un Long
+        // positivo de Kotlin.
+        return Ok(json!({
+            "valid": true,
+            "kind": "integrated",
+            "short": integrated.short.encode(),
+            "tag": integrated.tag.to_string(),
+        })
+        .to_string());
     } else {
         return Ok(json!({ "valid": false }).to_string());
     };
@@ -571,7 +583,8 @@ fn quote(json: &str) -> Result<String, String> {
 }
 
 /// La dirección completa de `text`: ella misma, o la que el directorio de
-/// la red tiene para una corta (comprobada contra la corta).
+/// la red tiene para una corta o la corta de una integrada (comprobada contra
+/// la corta).
 async fn recipient(
     text: &str,
     profile: Profile,
@@ -581,8 +594,11 @@ async fn recipient(
     if let Ok(full) = Address::decode(text, profile.network) {
         return Ok(full);
     }
-    let short = ShortAddress::decode(text, profile.network)
-        .map_err(|_| "no es una direccion de esta red, ni completa ni corta".to_string())?;
+    let short = match IntegratedAddress::decode(text, profile.network) {
+        Ok(integrated) => integrated.short,
+        Err(_) => ShortAddress::decode(text, profile.network)
+            .map_err(|_| "no es una direccion de esta red, ni completa ni corta".to_string())?,
+    };
     stark_mobile::resolve(client, &short, profile.network)
         .await?
         .ok_or_else(|| {
@@ -598,11 +614,20 @@ fn send(json: &str) -> Result<String, String> {
     let profile = request.profile()?;
     let route = request.route()?;
     let amount = request.amount_atoms.filter(|a| *a > 0).ok_or("el monto tiene que ser positivo")?;
-    let memo = request.memo.clone().unwrap_or_default();
+    let mut memo = request.memo.clone().unwrap_or_default();
     if memo.len() > MEMO_BYTES {
         return Err("el memo pasa de 512 bytes".into());
     }
     let to_text = request.to.clone().ok_or("falta el destinatario")?;
+    // A una integrada (la de un exchange), el memo empieza con su código de
+    // cliente: se arma antes de conectarse, así un memo largo falla rápido.
+    let tag = IntegratedAddress::decode(to_text.trim(), profile.network)
+        .ok()
+        .map(|integrated| integrated.tag);
+    if let Some(tag) = tag {
+        memo = tag_memo(tag, &memo)
+            .map_err(|_| "con el codigo de cliente de esa direccion, el memo pasa de 512 bytes".to_string())?;
+    }
     let _lock = state_lock();
     let _sending = Sending;
     SEND_PHASE.store(1, Ordering::Relaxed);
@@ -657,6 +682,7 @@ fn send(json: &str) -> Result<String, String> {
             "fee_atoms": fee,
             "expiry": expiry,
             "proving_ms": proving_ms,
+            "tag": tag.map(|tag| tag.to_string()),
         })
         .to_string()),
         Err((refused, reason)) => {
@@ -811,6 +837,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(checked["kind"], "short");
+    }
+
+    /// El vector fijo del nodo (`zoka-pq-pool`, integrated.rs): la corta de
+    /// testnet de la semilla de prueba 2 con el código de cliente 42.
+    #[test]
+    fn an_exchange_address_gives_its_short_address_and_customer_code() {
+        let short = "zqtest22m1iDEYKpaemBFZMVj2k1SAzEV9BGL1uFXRZVABUrvAYuHQRbj";
+        let integrated = "zqtesti23jYjdoHfKWvz5DDUPwYYXACN7eAWX8qdEVQRw5uAGAeCskj7rGtZtrKFb16E2";
+        let checked: Value =
+            serde_json::from_str(&check_address(&json!({ "address": integrated }).to_string()).unwrap()).unwrap();
+        assert_eq!(checked, json!({"valid": true, "kind": "integrated", "short": short, "tag": "42"}));
+        let other: Value = serde_json::from_str(
+            &check_address(&json!({ "address": integrated.replace("zqtesti2", "zqi2") }).to_string()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(other["valid"], false);
+        assert_eq!(tag_memo(42, "hola").unwrap(), "zoka-tag:42\nhola");
     }
 
     #[test]

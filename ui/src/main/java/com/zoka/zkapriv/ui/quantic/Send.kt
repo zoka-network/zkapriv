@@ -113,10 +113,15 @@ fun SendScreen(
         }
     }
 
-    val kind = remember(to) {
+    val checked = remember(to) {
         if (to.isBlank()) null else runCatching { vm.checkAddress(to.trim()) }.getOrNull()
-            ?.takeIf { it.optBoolean("valid") }?.getString("kind")
+            ?.takeIf { it.optBoolean("valid") }
     }
+    val kind = checked?.getString("kind")
+    // La dirección de un exchange lleva un código de cliente: el motor lo
+    // escribe al principio del memo, y le quita esos bytes a la nota.
+    val tag = checked?.takeIf { kind == "integrated" }?.optString("tag")?.takeIf { it.isNotEmpty() }
+    val memoLimit = if (tag == null) 512 else 512 - "zoka-tag:$tag\n".toByteArray(Charsets.UTF_8).size
     val amount = parseZka(amountText)
     val memoBytes = memo.toByteArray(Charsets.UTF_8).size
     LaunchedEffect(amount, state.height, state.spendableAtoms, state.reservedAtoms) {
@@ -156,7 +161,7 @@ fun SendScreen(
                     modifier = Modifier.fillMaxWidth(),
                     variant = ZButtonVariant.Primary,
                     size = ZButtonSize.Large,
-                    enabled = kind != null && amount != null && amount > 0 && enough && memoBytes <= 512 &&
+                    enabled = kind != null && amount != null && amount > 0 && enough && memoBytes <= memoLimit &&
                         state.pendingTxid == null,
                 ) { ZButtonText("Review") }
             },
@@ -173,7 +178,7 @@ fun SendScreen(
                 value = to,
                 onValueChange = { to = it.trim() },
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = "zqtest2… short or full address",
+                placeholder = "Short, full or exchange address",
                 isError = to.isNotBlank() && kind == null,
                 trailing = {
                     Row {
@@ -193,6 +198,10 @@ fun SendScreen(
                     HintText("The network finds the full address when you send.")
                 }
                 kind == "full" -> Pill("Full address", tone = ZkTone.On)
+                kind == "integrated" -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Pill("Exchange", tone = ZkTone.Accent)
+                    HintText("Customer code $tag goes in the encrypted memo.")
+                }
             }
             VSpace(4)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -228,9 +237,9 @@ fun SendScreen(
                 placeholder = "Optional. Encrypted with your payment.",
                 mono = false,
                 singleLine = false,
-                isError = memoBytes > 512,
+                isError = memoBytes > memoLimit,
             )
-            HintText("$memoBytes / 512 bytes")
+            HintText("$memoBytes / $memoLimit bytes")
         }
 
         SendStep.Review -> ZkScreen(
@@ -251,6 +260,7 @@ fun SendScreen(
                 }
                 ThinDivider()
                 KeyValueRow("To", middleTruncated(to.trim(), 14, 10))
+                if (tag != null) KeyValueRow("Customer code", tag)
                 KeyValueRow("Network fee", formatZka(fee) + " ZKA")
                 KeyValueRow("Total", formatZka((amount ?: 0) + fee) + " ZKA")
                 if (memo.isNotBlank()) KeyValueRow("Memo", memo)
