@@ -1,6 +1,6 @@
-# Privacidad de ZKAPriv 3
+# Privacidad de ZKAPriv 4
 
-Actualizada el 3 de noviembre de 2026. Zoka Quantic **testnet v2**.
+Actualizada el 27 de noviembre de 2026. Zoka Quantic **testnet v3**.
 
 ZKAPriv es autocustodiada: vos guardás las 24 palabras que permiten recuperar
 y gastar tus monedas. La app no manda la frase, las claves de gasto ni el
@@ -26,13 +26,17 @@ mandando una dirección o una clave de vista a la API.
 
 Publicar tu dirección corta comparte su dirección completa con el
 directorio de la red. Al pagar una dirección corta, los pares consultados
-reciben esa consulta. Se transmite la transacción ya probada, con salidas
+reciben esa consulta. Al pagar la dirección de depósito de un exchange
+(integrada), el código de cliente que lleva va dentro del mensaje cifrado,
+para que el exchange lo lea. Se transmite la transacción ya probada, con salidas
 y mensajes cifrados. Los montos y participantes no aparecen en claro en la
 cadena. Un mensaje puede ser leído por quien envía y quien recibe, mediante
 sus respectivas claves de vista.
 
-Sin Tor, los operadores de la API, su infraestructura y los pares pueden
-ver tu IP, horarios y metadatos de conexión. Pueden estar en otros países.
+Sin Tor, los operadores de la API, los relays que llevan las conexiones
+entre pares (relay1 y relay2.zoka.network, de Zoka, y los de n0), su
+infraestructura y los pares pueden ver tu IP, horarios y metadatos de
+conexión. Pueden estar en otros países.
 La app no controla sus registros ni promete anonimato absoluto.
 
 ## Tor opcional
@@ -53,7 +57,7 @@ el contenido a disposición del portapapeles o de la app elegida. La clave
 de vista permite leer saldo e historial, pero no gastar. La frase sí permite
 gastar: nunca la compartas.
 
-El flujo de ZKAPriv 3 no consulta precios, no incluye publicidad ni envía
+ZKAPriv no consulta precios, no incluye publicidad ni envía
 telemetría de uso. Las capturas de la billetera están bloqueadas. La vista
 de diseño de depuración usa únicamente datos ficticios.
 
