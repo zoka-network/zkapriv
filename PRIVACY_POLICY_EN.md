@@ -1,6 +1,6 @@
 # ZKAPriv 4 privacy
 
-Updated November 12, 2026. Zoka Quantic **testnet v3**, whose coins have no value.
+Updated November 27, 2026. Zoka Quantic **testnet v3**, whose coins have no value.
 
 ZKAPriv is self-custodial. Recovery phrases, spending keys and proof witnesses
 are not sent to servers. STARK proofs are generated on the phone. Android
@@ -14,12 +14,16 @@ with zokascan.cc and P2P peers as alternatives. Requests specify block
 heights, not wallet addresses or view keys. Outputs are opened locally.
 Publishing a short address shares its full address with the directory.
 Resolving a recipient's short address reveals that query to the queried
-peers. Payments transmit completed proofs and encrypted outputs. Amounts
+peers. Paying an exchange's deposit (integrated) address writes the customer
+code it carries into the encrypted memo, for the exchange to read.
+Payments transmit completed proofs and encrypted outputs. Amounts
 and participants are not public on the chain. Memos are readable by sender
 and recipient through their respective view keys.
 
-API operators, infrastructure providers and directly contacted peers may see
-your IP, timing and connection metadata, and may operate in other countries.
+API operators, the relays that carry peer-to-peer connections (Zoka's relay1
+and relay2.zoka.network, and n0's), infrastructure providers and directly
+contacted peers may see your IP, timing and connection metadata, and may
+operate in other countries.
 ZKAPriv does not control their logs or promise absolute anonymity.
 
 Optional Tor uses embedded Arti for reading, directory operations and sending
@@ -29,8 +33,8 @@ operations. External browsers and sharing targets use their own settings.
 
 Camera access for QR scanning and biometrics are optional. Copying and sharing
 expose selected content to the clipboard or chosen app. A view key reveals
-balance and history but cannot spend; recovery phrases can spend. The version
-3 wallet flow has no price requests, advertising or usage telemetry. Wallet
+balance and history but cannot spend; recovery phrases can spend. ZKAPriv
+has no price requests, advertising or usage telemetry. Wallet
 screenshots are blocked; debug design previews use synthetic data only.
 
 Settings lets you authenticate to view recovery information, change the PIN

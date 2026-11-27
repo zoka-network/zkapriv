@@ -88,8 +88,12 @@ fun parsePaymentText(text: String): Pair<String, String?> {
 /** Lo que muestra el formulario de envío: lo arma [SendScreen] y la vista de diseño. */
 internal data class SendFormState(
     val to: String = "",
-    /** `short`, `full` o null si no es una dirección de esta red. */
+    /** `short`, `full`, `integrated` (la de un exchange) o null si no es una dirección de esta red. */
     val kind: String? = null,
+    /** El código de cliente de una dirección de exchange, que el motor escribe en el memo. */
+    val tag: String? = null,
+    /** Lo que le queda al memo: el código de cliente ocupa una parte. */
+    val memoLimit: Int = MAX_MEMO_BYTES,
     val amountText: String = "",
     /** El monto en átomos, o null si lo escrito no es un monto. */
     val amountAtoms: Long? = null,
@@ -105,7 +109,7 @@ internal data class SendFormState(
 ) {
     val memoBytes: Int get() = memo.toByteArray(Charsets.UTF_8).size
     val canReview: Boolean
-        get() = kind != null && (amountAtoms ?: 0) > 0 && enough && memoBytes <= MAX_MEMO_BYTES && !pending
+        get() = kind != null && (amountAtoms ?: 0) > 0 && enough && memoBytes <= memoLimit && !pending
 }
 
 @Composable
@@ -144,10 +148,15 @@ fun SendScreen(
         }
     }
 
-    val kind = remember(to) {
+    val checked = remember(to) {
         if (to.isBlank()) null else runCatching { vm.checkAddress(to.trim()) }.getOrNull()
-            ?.takeIf { it.optBoolean("valid") }?.getString("kind")
+            ?.takeIf { it.optBoolean("valid") }
     }
+    val kind = checked?.getString("kind")
+    // La dirección de un exchange lleva un código de cliente: el motor lo
+    // escribe al principio del memo, y le quita esos bytes a la nota.
+    val tag = checked?.takeIf { kind == "integrated" }?.optString("tag")?.takeIf { it.isNotEmpty() }
+    val memoLimit = if (tag == null) MAX_MEMO_BYTES else MAX_MEMO_BYTES - "zoka-tag:$tag\n".toByteArray(Charsets.UTF_8).size
     val amount = parseZka(amountText)
     LaunchedEffect(amount, state.height, state.spendableAtoms, state.reservedAtoms) {
         quote = null
@@ -159,6 +168,8 @@ fun SendScreen(
     val form = SendFormState(
         to = to,
         kind = kind,
+        tag = tag,
+        memoLimit = memoLimit,
         amountText = amountText,
         amountAtoms = amount,
         quoted = quote != null,
@@ -273,7 +284,7 @@ internal fun SendFormContent(
                 value = form.to,
                 onValueChange = onTo,
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = "zqtest2… short or full address",
+                placeholder = "Short, full or exchange address",
                 isError = badAddress,
                 trailing = {
                     Row {
@@ -292,6 +303,13 @@ internal fun SendFormContent(
                     HintText("Resolved by the network when you send.")
                 }
                 form.kind == "full" -> Pill("Full address", tone = ZkTone.Accent)
+                form.kind == "integrated" -> Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Pill("Exchange", tone = ZkTone.Accent)
+                    HintText("Customer code ${form.tag.orEmpty()} goes in the encrypted memo.")
+                }
             }
         }
         Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -319,9 +337,9 @@ internal fun SendFormContent(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 ZLabel("Memo", Modifier.weight(1f))
                 Text(
-                    "${form.memoBytes} / $MAX_MEMO_BYTES",
+                    "${form.memoBytes} / ${form.memoLimit}",
                     style = Zk.text.mono.copy(fontSize = 11.sp),
-                    color = if (form.memoBytes > MAX_MEMO_BYTES) c.danger else c.textMuted,
+                    color = if (form.memoBytes > form.memoLimit) c.danger else c.textMuted,
                 )
             }
             ZInput(
@@ -331,7 +349,7 @@ internal fun SendFormContent(
                 placeholder = "Optional. Encrypted with your payment.",
                 mono = false,
                 singleLine = false,
-                isError = form.memoBytes > MAX_MEMO_BYTES,
+                isError = form.memoBytes > form.memoLimit,
             )
         }
     }
@@ -374,6 +392,7 @@ internal fun SendReviewContent(form: SendFormState, tor: Boolean, onBack: () -> 
             ThinDivider()
             Column {
                 KeyValueRow("To", middleTruncated(form.to.trim(), 14, 10))
+                form.tag?.let { KeyValueRow("Customer code", it) }
                 KeyValueRow("Network fee", formatZka(form.feeAtoms) + " ZKA")
                 KeyValueRow("Total", formatZka(amount + form.feeAtoms) + " ZKA")
                 if (form.memo.isNotBlank()) KeyValueRow("Memo", form.memo)
