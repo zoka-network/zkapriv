@@ -9,9 +9,13 @@ import com.zoka.zkapriv.network.nativebridge.LocalProverClient
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 
+// El proceso aparte del probador Groth16 era de Zenith. Zoka Quantic prueba con
+// STARK dentro del motor y la app ya no declara ese servicio.
+@Ignore("Zenith's Groth16 prover service: Zoka Quantic proves with STARK in the engine")
 @RunWith(AndroidJUnit4::class)
 class LocalProverServiceInstrumentedTest {
     @Test

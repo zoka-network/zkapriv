@@ -5,11 +5,15 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.zoka.zkapriv.network.nativebridge.ZokaNativeWallet
 import java.io.File
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class MobileProverBenchmarkInstrumentedTest {
+    // Mide el probador Groth16 de Zenith con sus parámetros, que la app de Zoka
+    // Quantic ya no trae.
+    @Ignore("Zenith's Groth16 parameters are no longer bundled: Zoka Quantic proves with STARK")
     @Test
     fun benchmarkSyntheticPrivateTransactions() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
