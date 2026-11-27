@@ -17,7 +17,20 @@ direcciones de exchange.
 - Network ya no dice «the team's hybrid checkpoint»: el checkpoint lo firman
   dos de las tres claves de autoridad.
 - Pruebas: `assembleDebug testDebugUnitTest` sin fallas; capturas en el
-  SM-A135M (360 dp, letra 110 %) con la vista de diseño.
+  SM-A135M (360 dp, letra 110 %) con la vista de diseño, en los dos temas
+  (`c:\tmp\zkapriv-rediseno\4.1.0-27-11`).
+- Pruebas instrumentadas con `am instrument` (no con `connectedDebugAndroidTest`,
+  que desinstala la variante de prueba y borra sus datos): **16 sin fallas**,
+  incluida la que lee la cadena real por HTTPS (11.300 bloques), P2P y Tor con
+  Arti. Las cuatro del probador Groth16 de Zenith quedan ignoradas.
+
+**Publicada el 27/11 con el OK del usuario:** release `v4.1.0` (Latest; la
+4.0.2 marcada «Superseded»), etiqueta en `c288ea9`, `ZKAPriv-4.1.0.apk`
+SHA-256 `ada400310c30200fba8724b201f86b15538a9b70b616e84b5550e8edd2b85d17`,
+certificado `061376f8…` (el de siempre), `SHA256SUMS.txt` firmado con la clave
+de releases. Bajada de vuelta y verificada; instalada sobre la app real del
+teléfono (4.1.0, código 23, conserva la billetera); zoka.network la ofrece; aviso
+en Discord.
 
 ## Trabajo del 13/11
 
