@@ -17,6 +17,16 @@ class AvatarMosaicTest {
         assertNull(AvatarMosaic.code(""))
         assertNull(AvatarMosaic.code("bad id"))
     }
+
+    @Test fun zokaIdCodeV2MatchesTheSpecVectorsAndStartsWithTheV1Code() {
+        // docs/ZOKA-ID.md del nodo: los primeros 10 bytes de la misma semilla.
+        assertEquals("F4A4-595C-AF1B-A80B-914F", AvatarMosaic.codeV2("public-account:alice"))
+        val example = "zqtest2ZokaIdExampleShortAddressForTheSpecVectors0000000"
+        assertEquals("7E6B-EFD1-09F3-E0AC-979C", AvatarMosaic.codeV2(example))
+        assertTrue(AvatarMosaic.codeV2(example)!!.startsWith(AvatarMosaic.code(example)!!))
+        assertNull(AvatarMosaic.codeV2(""))
+        assertNull(AvatarMosaic.codeV2("bad id"))
+    }
     @Test fun all81CellsUseTheFixedPalette() {
         val cells = AvatarMosaic.generate("public-account:bob")!!
         assertEquals(81, cells.size)

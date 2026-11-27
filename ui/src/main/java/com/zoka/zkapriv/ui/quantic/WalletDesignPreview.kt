@@ -51,6 +51,7 @@ fun WalletDesignPreview(dark: Boolean, scenario: String) {
             kind = if (exchange) "integrated" else "short",
             tag = if (exchange) "4242" else null,
             memoLimit = if (exchange) MAX_MEMO_BYTES - "zoka-tag:4242\n".length else MAX_MEMO_BYTES,
+            short = if (exchange) "zqtest2ExchangeWalletSampleShortAddress000000000000000000" else sampleAddress(0).short,
             amountText = "25", amountAtoms = 25_000_000,
             quoted = true, enough = true, feeAtoms = 200, spendableAtoms = 12_438_000_000,
             maxSendableAtoms = 12_437_999_800,

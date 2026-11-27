@@ -83,7 +83,8 @@ class AvatarInstrumentedTest {
         fun code() = compose.onNodeWithTag("unique-id").fetchSemanticsNode()
             .config[SemanticsProperties.Text].joinToString("") { it.text }
         val main = code()
-        assertTrue(main, Regex("[0-9A-F]{4}-[0-9A-F]{4}").matches(main))
+        // El código largo del Zoka ID (v2): cinco grupos de cuatro (docs/ZOKA-ID.md del nodo).
+        assertTrue(main, Regex("[0-9A-F]{4}(-[0-9A-F]{4}){4}").matches(main))
         compose.onNodeWithTag("credential-avatar", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithContentDescription("Hide balance").performClick()
         compose.onNodeWithContentDescription("Show balance").assertExists()

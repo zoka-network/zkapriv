@@ -190,12 +190,13 @@ private val CardMuted = Color(0xFF7C7C84)
 @Composable
 private fun AccountCredential(name: String, accountId: String, addresses: Int, birth: Int, modifier: Modifier) {
     val shape = RoundedCornerShape(22.dp)
-    val code = remember(accountId) { AvatarMosaic.code(accountId) }
+    // El código largo del Zoka ID (v2): los dos primeros grupos son el de la 4.1.0.
+    val code = remember(accountId) { AvatarMosaic.codeV2(accountId) }
     Column(modifier.fillMaxWidth().clip(shape).background(Brush.linearGradient(CardInk))
         .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.18f), Color.White.copy(alpha = 0.05f))), shape)
         .padding(horizontal = 18.dp, vertical = 16.dp).testTag("account-credential")) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            CardLabel("ZKAPRIV ID", Modifier.weight(1f))
+            CardLabel("ZOKA ID", Modifier.weight(1f))
             Image(painterResource(R.drawable.zkapriv_logo_mark), null, Modifier.height(14.dp).aspectRatio(600f / 740f),
                 colorFilter = ColorFilter.tint(CardMuted))
         }
@@ -208,8 +209,8 @@ private fun AccountCredential(name: String, accountId: String, addresses: Int, b
                     lineHeight = 21.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(8.dp))
                 CardLabel("UNIQUE ID")
-                Text(code ?: "—", color = CardText, fontFamily = MonoFamily, fontSize = 15.sp, lineHeight = 19.sp,
-                    letterSpacing = 1.2.sp, maxLines = 1, modifier = Modifier.testTag("unique-id"))
+                Text(code ?: "—", color = CardText, fontFamily = MonoFamily, fontSize = 12.sp, lineHeight = 17.sp,
+                    letterSpacing = 0.4.sp, maxLines = 1, softWrap = false, modifier = Modifier.testTag("unique-id"))
             }
         }
         Spacer(Modifier.height(14.dp))

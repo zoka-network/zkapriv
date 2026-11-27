@@ -38,6 +38,18 @@ object AvatarMosaic {
         return hex.substring(0, 4) + "-" + hex.substring(4)
     }
 
+    /**
+     * The Zoka ID code, version 2: the first 10 bytes of the same seed (80 bits),
+     * upper-case hex in five groups (`F4A4-595C-AF1B-A80B-914F`). The first two
+     * groups are the version 1 [code]. Long enough to confirm a recipient: see
+     * docs/ZOKA-ID.md in the node repository. The input is a short address.
+     */
+    fun codeV2(accountId: String): String? {
+        if (!valid(accountId)) return null
+        val hex = seed(accountId).take(10).joinToString("") { "%02X".format(it.toInt() and 0xff) }
+        return hex.chunked(4).joinToString("-")
+    }
+
     /** Null means unavailable/invalid: the view draws a neutral placeholder, not an identity. */
     fun generate(accountId: String): List<Int>? {
         if (!valid(accountId)) return null

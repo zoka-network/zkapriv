@@ -172,6 +172,9 @@ internal fun ColumnScope.ReceiveBody(
             ZLabel(if (current.index == 0) "Main address" else "Address #${current.index}")
             MonoText(middleTruncated(shown, head = 16, tail = 12))
         }
+        // El ID sale siempre de la corta, aunque se muestre la completa: es
+        // lo que quien te paga ve en su revisión.
+        ZokaIdRow(current.short)
         AddressStatus(current.published, short)
         Segmented(listOf("Short", "Full"), which, { which = it }, Modifier.fillMaxWidth())
     }

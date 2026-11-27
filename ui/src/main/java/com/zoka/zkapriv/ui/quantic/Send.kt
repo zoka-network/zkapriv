@@ -94,6 +94,8 @@ internal data class SendFormState(
     val tag: String? = null,
     /** Lo que le queda al memo: el código de cliente ocupa una parte. */
     val memoLimit: Int = MAX_MEMO_BYTES,
+    /** La forma corta del destinatario: de ella sale su Zoka ID. */
+    val short: String? = null,
     val amountText: String = "",
     /** El monto en átomos, o null si lo escrito no es un monto. */
     val amountAtoms: Long? = null,
@@ -157,6 +159,8 @@ fun SendScreen(
     // escribe al principio del memo, y le quita esos bytes a la nota.
     val tag = checked?.takeIf { kind == "integrated" }?.optString("tag")?.takeIf { it.isNotEmpty() }
     val memoLimit = if (tag == null) MAX_MEMO_BYTES else MAX_MEMO_BYTES - "zoka-tag:$tag\n".toByteArray(Charsets.UTF_8).size
+    // El motor da la corta de cualquier dirección (completa, corta o de exchange).
+    val recipientShort = checked?.optString("short")?.takeIf { it.isNotEmpty() }
     val amount = parseZka(amountText)
     LaunchedEffect(amount, state.height, state.spendableAtoms, state.reservedAtoms) {
         quote = null
@@ -170,6 +174,7 @@ fun SendScreen(
         kind = kind,
         tag = tag,
         memoLimit = memoLimit,
+        short = recipientShort,
         amountText = amountText,
         amountAtoms = amount,
         quoted = quote != null,
@@ -311,6 +316,7 @@ internal fun SendFormContent(
                     HintText("Customer code ${form.tag.orEmpty()} goes in the encrypted memo.")
                 }
             }
+            if (!badAddress) form.short?.let { ZokaIdRow(it) }
         }
         Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -396,6 +402,11 @@ internal fun SendReviewContent(form: SendFormState, tor: Boolean, onBack: () -> 
                 KeyValueRow("Network fee", formatZka(form.feeAtoms) + " ZKA")
                 KeyValueRow("Total", formatZka(amount + form.feeAtoms) + " ZKA")
                 if (form.memo.isNotBlank()) KeyValueRow("Memo", form.memo)
+            }
+            form.short?.let {
+                ThinDivider()
+                ZokaIdRow(it, label = "Recipient's Zoka ID")
+                HintText("Ask the recipient for their code and compare it before you send.")
             }
         }
         Notice(
