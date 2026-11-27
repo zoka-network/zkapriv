@@ -391,11 +391,15 @@ fn check_address(json: &str) -> Result<String, String> {
     let request = Request::parse(json)?;
     let network = request.profile()?.network;
     let text = request.address.as_deref().ok_or("falta address")?.trim();
-    let kind = if Address::decode(text, network).is_ok() {
-        "full"
-    } else if ShortAddress::decode(text, network).is_ok() {
-        "short"
-    } else if let Ok(integrated) = IntegratedAddress::decode(text, network) {
+    // Siempre con su forma corta canónica: de ella sale el Zoka ID que la app
+    // muestra para confirmar al destinatario (docs/ZOKA-ID.md del nodo).
+    if let Ok(address) = Address::decode(text, network) {
+        return Ok(json!({ "valid": true, "kind": "full", "short": address.short().map_err(err)? }).to_string());
+    }
+    if let Ok(short) = ShortAddress::decode(text, network) {
+        return Ok(json!({ "valid": true, "kind": "short", "short": short.encode() }).to_string());
+    }
+    if let Ok(integrated) = IntegratedAddress::decode(text, network) {
         // La de un exchange: su corta y el código de cliente, que el pago
         // lleva al principio del memo. En texto: un u64 no entra en un Long
         // positivo de Kotlin.
@@ -406,10 +410,8 @@ fn check_address(json: &str) -> Result<String, String> {
             "tag": integrated.tag.to_string(),
         })
         .to_string());
-    } else {
-        return Ok(json!({ "valid": false }).to_string());
-    };
-    Ok(json!({ "valid": true, "kind": kind }).to_string())
+    }
+    Ok(json!({ "valid": false }).to_string())
 }
 
 /// Lo guardado, sin red: saldo, historial y desde dónde sigue.
@@ -837,6 +839,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(checked["kind"], "short");
+        assert_eq!(checked["short"], info["short"]);
+        // La completa también trae su corta: de ella sale el Zoka ID.
+        let full: Value = serde_json::from_str(
+            &check_address(&json!({"address": info["address"]}).to_string()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(full["kind"], "full");
+        assert_eq!(full["short"], info["short"]);
     }
 
     /// El vector fijo del nodo (`zoka-pq-pool`, integrated.rs): la corta de
