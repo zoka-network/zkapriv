@@ -132,7 +132,7 @@ fun SettingsScreen(
             ThinDivider()
             SettingRow("Source code", null) { open("https://github.com/zoka-network/zkapriv") }
             ThinDivider()
-            SettingRow("Privacy", null) { open("https://github.com/zoka-network/zkapriv/blob/zkapriv-v2/PRIVACY_POLICY_EN.md") }
+            SettingRow("Privacy", null) { open("https://github.com/zoka-network/zkapriv/blob/main/PRIVACY_POLICY_EN.md") }
             HintText("Payments are private: amounts, senders and receivers are not public. The seeds you connect to see your IP unless Tor mode is on.")
         }
 
