@@ -1,5 +1,26 @@
 # ZKAPriv 4.1.0: rediseño negro y vidrio
 
+## Cierre del 27/11/2026 (rama `zkapriv-4.1`)
+
+El usuario conectó el teléfono y pidió cerrar la 4.1. La rama `zkapriv-4.1`
+parte de `panel-limpio-y-hojas` (inicio limpio, hojas con maximizar y
+minimizar, bienvenida y logo nuevos, credencial con el ID único) y le suma
+`main` (4.0.2): los motores con la prueba v4, los relays propios y las
+direcciones de exchange.
+
+- Chocaron tres archivos. La versión pasa a **4.1.0, código 23** (la 4.0.2
+  publicada es el 22). Ajustes queda como en el rediseño, que ya enlazaba la
+  política de `main`. Envíos del rediseño suma lo de la 4.0.2: reconoce la
+  dirección integrada, muestra la pastilla «Exchange» con el código de
+  cliente, achica el memo en lo que ocupa el código y lo lista en la revisión.
+- La vista de diseño tiene `send-exchange` y `review-exchange` para verlo.
+- Network ya no dice «the team's hybrid checkpoint»: el checkpoint lo firman
+  dos de las tres claves de autoridad.
+- Pruebas: `assembleDebug testDebugUnitTest` sin fallas; capturas en el
+  SM-A135M (360 dp, letra 110 %) con la vista de diseño.
+
+## Trabajo del 13/11
+
 Trabajo del 13/11/2026, rama `rediseno-vidrio`. Continúa los commits de
 Claude `3fbc06b` (direcciones) y `3550b61` (restauración).
 Plan: [PLAN-REDISENO-4.1.md](PLAN-REDISENO-4.1.md).

@@ -49,8 +49,8 @@ internal fun NetworkContent(state: QuanticState, tor: Boolean, onBack: () -> Uni
                 if (state.lastSyncMillis > 0) DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(state.lastSyncMillis)) else "—",
             )
             HintText(
-                "It updates by itself. Every page is checked against its block header and the team's " +
-                    "hybrid checkpoint, so a server cannot invent your balance.",
+                "It updates by itself. Every page is checked against its block header and the network's " +
+                    "checkpoint, signed by two of three authority keys, so a server cannot invent your balance.",
             )
         }
         Panel(title = "Privacy") {

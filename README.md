@@ -5,8 +5,8 @@ testnet of a blockchain with private payments by default and a post-quantum
 private pool. Your phone builds the STARK proof of every payment; your 24
 recovery words and keys never leave it. Testnet coins have no value.
 
-Current version: **4.0.2**, for Android 8 or later on `arm64-v8a` and
-`armeabi-v7a`. Download the APK and its `SHA256SUMS.txt` from
+Current version: **4.1.0**, with a new black-and-glass design, for Android 8
+or later on `arm64-v8a` and `armeabi-v7a`. Download the APK and its `SHA256SUMS.txt` from
 [Releases](https://github.com/zoka-network/zkapriv/releases/latest); from 4.0.1
 on, `SHA256SUMS.txt.sig` signs the checksum list with Zoka's release key
 ([how to verify](https://github.com/zoka-network/zokanetwork/blob/main/docs/release-verification.md)).
