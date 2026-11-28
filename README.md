@@ -5,8 +5,8 @@ testnet of a blockchain with private payments by default and a post-quantum
 private pool. Your phone builds the STARK proof of every payment; your 24
 recovery words and keys never leave it. Testnet coins have no value.
 
-Current version: **4.1.0**, with a new black-and-glass design, for Android 8
-or later on `arm64-v8a` and `armeabi-v7a`. Download the APK and its `SHA256SUMS.txt` from
+Current version: **4.1.1**, with the black-and-glass design and the Zoka ID,
+for Android 8 or later on `arm64-v8a` and `armeabi-v7a`. Download the APK and its `SHA256SUMS.txt` from
 [Releases](https://github.com/zoka-network/zkapriv/releases/latest); from 4.0.1
 on, `SHA256SUMS.txt.sig` signs the checksum list with Zoka's release key
 ([how to verify](https://github.com/zoka-network/zokanetwork/blob/main/docs/release-verification.md)).
@@ -23,6 +23,9 @@ on, `SHA256SUMS.txt.sig` signs the checksum list with Zoka's release key
   code into the encrypted memo.
 - **The same wallet everywhere.** The 24 words open the same wallet in ZSilent,
   the web wallet and ZKAPriv.
+- **Zoka ID.** Every address has a mosaic and a 20-character code, the same in
+  every Zoka wallet and in ZokaScan. Before paying, compare the recipient's code
+  with theirs ([how it works](https://github.com/zoka-network/zokanetwork/blob/main/docs/ZOKA-ID.md)).
 - **Several wallets, one PIN.** Each wallet has its own 24 words; a 6-digit PIN
   and optional biometrics open them. Screenshots of the wallet are blocked.
 - **Verified reads.** The wallet reads public block pages from
